@@ -1,0 +1,86 @@
+Continue improving the existing VetDesk application.
+
+Do not rebuild the app from scratch and do not remove any completed features.
+
+The main goal is to make all user-created data persist after page refresh, logout, and login.
+
+Requirements:
+
+1. Add a real database
+- Use PostgreSQL if available in Replit.
+- Create proper tables/models for:
+  - Users
+  - Clinics
+  - Owners
+  - Pets
+  - Appointments
+  - Visits
+  - Recalls
+- Add relationships between owners, pets, appointments, visits, and recalls.
+- Make sure each clinic only sees its own data.
+
+2. Persistent data
+- Owners, pets, appointments, visits, and recalls must remain saved after:
+  - Refreshing the page
+  - Logging out
+  - Logging back in
+  - Restarting the app
+
+3. CRUD functionality
+Make sure these actions work with the database:
+- Add
+- View
+- Edit
+- Delete
+
+Apply this to:
+- Owners
+- Pets
+- Appointments
+- Visits
+- Recalls
+
+4. Authentication and permissions
+- Keep the existing login system.
+- Connect users to a clinic.
+- Add roles:
+  - Admin
+  - Veterinarian
+  - Front Desk
+- Add basic role-based permissions.
+- Front Desk can manage owners, pets, and appointments.
+- Veterinarian can manage visits and medical notes.
+- Admin can manage everything.
+
+5. Validation
+- Validate required fields.
+- Prevent invalid dates and empty records.
+- Show clear success and error messages.
+
+6. Database setup
+- Add migrations or schema setup.
+- Add a small amount of demo data only if the database is empty.
+- Do not overwrite real user-created data.
+
+7. Testing
+Test that:
+- New owner remains after refresh.
+- New pet remains after refresh.
+- New appointment remains after refresh.
+- New recall remains after refresh.
+- Edited data stays saved.
+- Deleted data stays deleted.
+- One clinic cannot access another clinic’s records.
+
+8. Important
+- Keep the current design and navigation.
+- Fix bugs before adding new features.
+- Do not add Twilio, Stripe, or other paid integrations yet.
+- Do not use temporary mock data for saved records.
+- Use production-quality database code.
+
+When finished, explain:
+- Which database was added
+- Which tables were created
+- How persistence works
+- Which tests were completed

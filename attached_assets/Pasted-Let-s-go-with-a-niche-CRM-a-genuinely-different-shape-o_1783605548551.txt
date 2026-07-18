@@ -1,0 +1,90 @@
+Let's go with a niche CRM — a genuinely different shape of business than the guitar app (B2B, subscription, not AI-dependent, less consumer marketing needed).
+
+Concept: CRM for Veterinary Clinics
+
+Why this one: Generic CRMs (Salesforce, HubSpot) are overkill and don't understand vet-specific workflows — patient (pet) history tied to owner, recall reminders for vaccines, multi-pet households, emergency triage notes. Vet clinics are underserved because they're not a "sexy" market big CRM companies chase, but there are ~30,000+ independent vet clinics in the US alone, most running on paper, spreadsheets, or clunky legacy software (Cornerstone, AVImark) that hasn't been redesigned in a decade.
+
+Core loop (MVP, nothing else):
+
+
+
+
+
+Front desk creates a client (owner) + patient (pet) record
+
+
+
+Log a visit: reason, notes, weight, meds prescribed
+
+
+
+System auto-schedules the next recall (e.g., "rabies due in 12 months") and sends the clinic a reminder
+
+
+
+Clinic sends the client an automated text/email reminder when it's due
+
+
+
+Simple dashboard: today's appointments, overdue recalls, recent visits
+
+What to explicitly leave OUT of v1:
+
+
+
+
+
+No billing/invoicing integration (huge scope creep — Stripe integration alone can eat a month)
+
+
+
+No inventory management (medication stock tracking)
+
+
+
+No multi-location support
+
+
+
+No custom form builder — hardcode the fields vets actually need
+
+Tech shape:
+
+
+
+
+
+Web app (desktop-first — front desk staff use a computer, not a phone)
+
+
+
+Simple database: owners, pets, visits, recall rules
+
+
+
+Twilio or similar for SMS reminders
+
+
+
+Basic role-based login (front desk vs. vet vs. admin)
+
+Monetization: $50–100/month per clinic (much higher willingness to pay than consumer apps — this saves staff time and reduces missed recalls, which directly ties to revenue for the clinic).
+
+Validation before building:
+
+
+
+
+
+Call or visit 10 independent vet clinics in your area. Ask what they currently use and what annoys them about it (missed recalls, clunky old software, no texting reminders)
+
+
+
+Offer to build a very basic version for one clinic for free or cheap in exchange for being your design partner
+
+
+
+If they say yes and actually use it daily for a few weeks, you have a real MVP with a paying reference customer waiting
+
+Timeline if validated: 3–4 weeks for a working version handling the core loop above — this is straightforward CRUD + a scheduling/reminder engine, no AI or hard technical risk involved.
+

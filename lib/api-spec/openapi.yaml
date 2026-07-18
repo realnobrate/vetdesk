@@ -1,0 +1,806 @@
+openapi: 3.1.0
+info:
+  # Do not change the title, if the title changes, the import paths will be broken
+  title: Api
+  version: 0.1.0
+  description: VetDesk API specification
+servers:
+  - url: /api
+    description: Base API path
+tags:
+  - name: health
+    description: Health operations
+  - name: owners
+    description: Client (pet owner) records
+  - name: pets
+    description: Patient (pet) records
+  - name: visits
+    description: Visit logs
+  - name: recalls
+    description: Recall (recurring reminder) tracking
+  - name: appointments
+    description: Scheduled appointments
+  - name: staff
+    description: Staff and roles
+  - name: dashboard
+    description: Dashboard summary data
+paths:
+  /healthz:
+    get:
+      operationId: healthCheck
+      tags: [health]
+      summary: Health check
+      description: Returns server health status
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+
+  /staff/me:
+    get:
+      operationId: getCurrentStaff
+      tags: [staff]
+      summary: Get or provision the current staff record for the signed-in user
+      responses:
+        "200":
+          description: Current staff member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StaffMember"
+
+  /staff:
+    get:
+      operationId: listStaff
+      tags: [staff]
+      summary: List staff members
+      responses:
+        "200":
+          description: Staff list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/StaffMember"
+
+  /staff/{id}:
+    patch:
+      operationId: updateStaff
+      tags: [staff]
+      summary: Update a staff member's role or name
+      parameters:
+        - $ref: "#/components/parameters/IdParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StaffUpdate"
+      responses:
+        "200":
+          description: Updated staff member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StaffMember"
+
+  /dashboard/summary:
+    get:
+      operationId: getDashboardSummary
+      tags: [dashboard]
+      summary: Today's appointments, overdue recalls, and recent visits
+      responses:
+        "200":
+          description: Dashboard summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardSummary"
+
+  /owners:
+    get:
+      operationId: listOwners
+      tags: [owners]
+      summary: List/search owners
+      parameters:
+        - name: search
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Filter by name, email, or phone
+      responses:
+        "200":
+          description: Owners list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Owner"
+    post:
+      operationId: createOwner
+      tags: [owners]
+      summary: Create an owner
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OwnerInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Owner"
+
+  /owners/{id}:
+    get:
+      operationId: getOwner
+      tags: [owners]
+      summary: Get an owner with their pets
+      parameters:
+        - $ref: "#/components/parameters/IdParam"
+      responses:
+        "200":
+          description: Owner with pets
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OwnerWithPets"
+        "404":
+          description: Not found
+    patch:
+      operationId: updateOwner
+      tags: [owners]
+      summary: Update an owner
+      parameters:
+        - $ref: "#/components/parameters/IdParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OwnerUpdate"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Owner"
+    delete:
+      operationId: deleteOwner
+      tags: [owners]
+      summary: Delete an owner
+      parameters:
+        - $ref: "#/components/parameters/IdParam"
+      responses:
+        "204":
+          description: Deleted
+
+  /pets:
+    get:
+      operationId: listPets
+      tags: [pets]
+      summary: List pets, optionally filtered by owner
+      parameters:
+        - name: ownerId
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: search
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Filter by pet name
+      responses:
+        "200":
+          description: Pets list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Pet"
+    post:
+      operationId: createPet
+      tags: [pets]
+      summary: Create a pet under an owner
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PetInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Pet"
+
+  /pets/{id}:
+    get:
+      operationId: getPet
+      tags: [pets]
+      summary: Get a pet with owner, visits, and recalls
+      parameters:
+        - $ref: "#/components/parameters/IdParam"
+      responses:
+        "200":
+          description: Pet detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PetDetail"
+        "404":
+          description: Not found
+    patch:
+      operationId: updatePet
+      tags: [pets]
+      summary: Update a pet
+      parameters:
+        - $ref: "#/components/parameters/IdParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PetUpdate"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Pet"
+    delete:
+      operationId: deletePet
+      tags: [pets]
+      summary: Delete a pet
+      parameters:
+        - $ref: "#/components/parameters/IdParam"
+      responses:
+        "204":
+          description: Deleted
+
+  /pets/{petId}/visits:
+    get:
+      operationId: listPetVisits
+      tags: [visits]
+      summary: List visits for a pet
+      parameters:
+        - $ref: "#/components/parameters/PetIdParam"
+      responses:
+        "200":
+          description: Visits list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Visit"
+    post:
+      operationId: createVisit
+      tags: [visits]
+      summary: Log a visit for a pet. Auto-schedules recalls for any vaccines administered.
+      parameters:
+        - $ref: "#/components/parameters/PetIdParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VisitInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Visit"
+
+  /visits/{id}:
+    patch:
+      operationId: updateVisit
+      tags: [visits]
+      summary: Update a visit
+      parameters:
+        - $ref: "#/components/parameters/IdParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VisitUpdate"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Visit"
+    delete:
+      operationId: deleteVisit
+      tags: [visits]
+      summary: Delete a visit
+      parameters:
+        - $ref: "#/components/parameters/IdParam"
+      responses:
+        "204":
+          description: Deleted
+
+  /recalls:
+    get:
+      operationId: listRecalls
+      tags: [recalls]
+      summary: List recalls across all pets
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/RecallStatus"
+        - name: dueBefore
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: Recalls list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RecallWithPet"
+    post:
+      operationId: createRecall
+      tags: [recalls]
+      summary: Manually add a recall for a pet
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecallInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Recall"
+
+  /pets/{petId}/recalls:
+    get:
+      operationId: listPetRecalls
+      tags: [recalls]
+      summary: List recalls for a pet
+      parameters:
+        - $ref: "#/components/parameters/PetIdParam"
+      responses:
+        "200":
+          description: Recalls list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Recall"
+
+  /recalls/{id}:
+    patch:
+      operationId: updateRecall
+      tags: [recalls]
+      summary: Update a recall (e.g. mark sent or completed)
+      parameters:
+        - $ref: "#/components/parameters/IdParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecallUpdate"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Recall"
+    delete:
+      operationId: deleteRecall
+      tags: [recalls]
+      summary: Delete a recall
+      parameters:
+        - $ref: "#/components/parameters/IdParam"
+      responses:
+        "204":
+          description: Deleted
+
+  /appointments:
+    get:
+      operationId: listAppointments
+      tags: [appointments]
+      summary: List appointments, optionally filtered by date
+      parameters:
+        - name: date
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+          description: Filter to a single day (YYYY-MM-DD)
+      responses:
+        "200":
+          description: Appointments list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AppointmentWithPet"
+    post:
+      operationId: createAppointment
+      tags: [appointments]
+      summary: Schedule an appointment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AppointmentInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Appointment"
+
+  /appointments/{id}:
+    patch:
+      operationId: updateAppointment
+      tags: [appointments]
+      summary: Update an appointment
+      parameters:
+        - $ref: "#/components/parameters/IdParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AppointmentUpdate"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Appointment"
+    delete:
+      operationId: deleteAppointment
+      tags: [appointments]
+      summary: Cancel/delete an appointment
+      parameters:
+        - $ref: "#/components/parameters/IdParam"
+      responses:
+        "204":
+          description: Deleted
+
+components:
+  parameters:
+    IdParam:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+    PetIdParam:
+      name: petId
+      in: path
+      required: true
+      schema:
+        type: integer
+
+  schemas:
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+      required:
+        - status
+
+    StaffRole:
+      type: string
+      enum: [front_desk, vet, admin]
+
+    StaffMember:
+      type: object
+      required: [id, clerkUserId, name, email, role, createdAt]
+      properties:
+        id: { type: integer }
+        clerkUserId: { type: string }
+        name: { type: string }
+        email: { type: string }
+        role: { $ref: "#/components/schemas/StaffRole" }
+        createdAt: { type: string, format: date-time }
+
+    StaffUpdate:
+      type: object
+      properties:
+        name: { type: string }
+        role: { $ref: "#/components/schemas/StaffRole" }
+
+    OwnerInput:
+      type: object
+      required: [firstName, lastName, phone]
+      properties:
+        firstName: { type: string, minLength: 1 }
+        lastName: { type: string, minLength: 1 }
+        email: { type: ["string", "null"] }
+        phone: { type: string, minLength: 1 }
+        address: { type: ["string", "null"] }
+
+    OwnerUpdate:
+      type: object
+      properties:
+        firstName: { type: string, minLength: 1 }
+        lastName: { type: string, minLength: 1 }
+        email: { type: ["string", "null"] }
+        phone: { type: string, minLength: 1 }
+        address: { type: ["string", "null"] }
+
+    Owner:
+      type: object
+      required: [id, firstName, lastName, phone, createdAt]
+      properties:
+        id: { type: integer }
+        firstName: { type: string }
+        lastName: { type: string }
+        email: { type: ["string", "null"] }
+        phone: { type: string }
+        address: { type: ["string", "null"] }
+        createdAt: { type: string, format: date-time }
+
+    OwnerWithPets:
+      allOf:
+        - $ref: "#/components/schemas/Owner"
+        - type: object
+          required: [pets]
+          properties:
+            pets:
+              type: array
+              items:
+                $ref: "#/components/schemas/Pet"
+
+    PetSpecies:
+      type: string
+      enum: [dog, cat, other]
+
+    PetSex:
+      type: string
+      enum: [male, female, unknown]
+
+    PetInput:
+      type: object
+      required: [ownerId, name, species]
+      properties:
+        ownerId: { type: integer }
+        name: { type: string, minLength: 1 }
+        species: { $ref: "#/components/schemas/PetSpecies" }
+        breed: { type: ["string", "null"] }
+        sex: { $ref: "#/components/schemas/PetSex" }
+        birthDate: { type: ["string", "null"], format: date }
+        weightLb: { type: ["number", "null"] }
+        notes: { type: ["string", "null"] }
+
+    PetUpdate:
+      type: object
+      properties:
+        name: { type: string, minLength: 1 }
+        species: { $ref: "#/components/schemas/PetSpecies" }
+        breed: { type: ["string", "null"] }
+        sex: { $ref: "#/components/schemas/PetSex" }
+        birthDate: { type: ["string", "null"], format: date }
+        weightLb: { type: ["number", "null"] }
+        notes: { type: ["string", "null"] }
+
+    Pet:
+      type: object
+      required: [id, ownerId, name, species, createdAt]
+      properties:
+        id: { type: integer }
+        ownerId: { type: integer }
+        name: { type: string }
+        species: { $ref: "#/components/schemas/PetSpecies" }
+        breed: { type: ["string", "null"] }
+        sex: { $ref: "#/components/schemas/PetSex" }
+        birthDate: { type: ["string", "null"], format: date }
+        weightLb: { type: ["number", "null"] }
+        notes: { type: ["string", "null"] }
+        createdAt: { type: string, format: date-time }
+
+    PetDetail:
+      allOf:
+        - $ref: "#/components/schemas/Pet"
+        - type: object
+          required: [owner, visits, recalls]
+          properties:
+            owner: { $ref: "#/components/schemas/Owner" }
+            visits:
+              type: array
+              items:
+                $ref: "#/components/schemas/Visit"
+            recalls:
+              type: array
+              items:
+                $ref: "#/components/schemas/Recall"
+
+    VisitInput:
+      type: object
+      required: [visitDate, reason]
+      properties:
+        visitDate: { type: string, format: date-time }
+        reason: { type: string, minLength: 1 }
+        notes: { type: ["string", "null"] }
+        weightLb: { type: ["number", "null"] }
+        medsPrescribed: { type: ["string", "null"] }
+        vaccinesAdministered:
+          type: array
+          items: { type: string }
+          description: >
+            Vaccine/treatment names given at this visit (e.g. "Rabies", "DHPP",
+            "Bordetella"). Known names automatically schedule a follow-up recall.
+        vetName: { type: ["string", "null"] }
+
+    VisitUpdate:
+      type: object
+      properties:
+        visitDate: { type: string, format: date-time }
+        reason: { type: string, minLength: 1 }
+        notes: { type: ["string", "null"] }
+        weightLb: { type: ["number", "null"] }
+        medsPrescribed: { type: ["string", "null"] }
+        vetName: { type: ["string", "null"] }
+
+    Visit:
+      type: object
+      required: [id, petId, visitDate, reason, vaccinesAdministered, createdAt]
+      properties:
+        id: { type: integer }
+        petId: { type: integer }
+        visitDate: { type: string, format: date-time }
+        reason: { type: string }
+        notes: { type: ["string", "null"] }
+        weightLb: { type: ["number", "null"] }
+        medsPrescribed: { type: ["string", "null"] }
+        vaccinesAdministered:
+          type: array
+          items: { type: string }
+        vetName: { type: ["string", "null"] }
+        createdAt: { type: string, format: date-time }
+
+    RecallStatus:
+      type: string
+      enum: [upcoming, due, overdue, sent, completed]
+
+    RecallInput:
+      type: object
+      required: [petId, recallType, dueDate]
+      properties:
+        petId: { type: integer }
+        visitId: { type: ["integer", "null"] }
+        recallType: { type: string, minLength: 1 }
+        dueDate: { type: string, format: date }
+        notes: { type: ["string", "null"] }
+
+    RecallUpdate:
+      type: object
+      properties:
+        recallType: { type: string, minLength: 1 }
+        dueDate: { type: string, format: date }
+        status: { $ref: "#/components/schemas/RecallStatus" }
+        notes: { type: ["string", "null"] }
+
+    Recall:
+      type: object
+      required: [id, petId, recallType, dueDate, status, createdAt]
+      properties:
+        id: { type: integer }
+        petId: { type: integer }
+        visitId: { type: ["integer", "null"] }
+        recallType: { type: string }
+        dueDate: { type: string, format: date }
+        status: { $ref: "#/components/schemas/RecallStatus" }
+        sentAt: { type: ["string", "null"], format: date-time }
+        completedAt: { type: ["string", "null"], format: date-time }
+        notes: { type: ["string", "null"] }
+        createdAt: { type: string, format: date-time }
+
+    RecallWithPet:
+      allOf:
+        - $ref: "#/components/schemas/Recall"
+        - type: object
+          required: [pet, owner]
+          properties:
+            pet: { $ref: "#/components/schemas/Pet" }
+            owner: { $ref: "#/components/schemas/Owner" }
+
+    AppointmentStatus:
+      type: string
+      enum: [scheduled, completed, cancelled, no_show]
+
+    AppointmentInput:
+      type: object
+      required: [petId, scheduledAt, reason]
+      properties:
+        petId: { type: integer }
+        scheduledAt: { type: string, format: date-time }
+        reason: { type: string, minLength: 1 }
+
+    AppointmentUpdate:
+      type: object
+      properties:
+        scheduledAt: { type: string, format: date-time }
+        reason: { type: string, minLength: 1 }
+        status: { $ref: "#/components/schemas/AppointmentStatus" }
+
+    Appointment:
+      type: object
+      required: [id, petId, scheduledAt, reason, status, createdAt]
+      properties:
+        id: { type: integer }
+        petId: { type: integer }
+        scheduledAt: { type: string, format: date-time }
+        reason: { type: string }
+        status: { $ref: "#/components/schemas/AppointmentStatus" }
+        createdAt: { type: string, format: date-time }
+
+    AppointmentWithPet:
+      allOf:
+        - $ref: "#/components/schemas/Appointment"
+        - type: object
+          required: [pet, owner]
+          properties:
+            pet: { $ref: "#/components/schemas/Pet" }
+            owner: { $ref: "#/components/schemas/Owner" }
+
+    DashboardSummary:
+      type: object
+      required:
+        [
+          todayAppointments,
+          overdueRecalls,
+          upcomingRecallsCount,
+          recentVisits,
+        ]
+      properties:
+        todayAppointments:
+          type: array
+          items:
+            $ref: "#/components/schemas/AppointmentWithPet"
+        overdueRecalls:
+          type: array
+          items:
+            $ref: "#/components/schemas/RecallWithPet"
+        upcomingRecallsCount:
+          type: integer
+        recentVisits:
+          type: array
+          items:
+            $ref: "#/components/schemas/Visit"
