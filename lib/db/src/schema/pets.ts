@@ -23,6 +23,7 @@ export const petsTable = pgTable("pets", {
   birthDate: date("birth_date", { mode: "string" }),
   weightLb: numeric("weight_lb", { mode: "number" }),
   notes: text("notes"),
+  photoUrl: text("photo_url"),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),

@@ -12,6 +12,7 @@ import type {
   AppointmentWithPet,
   RecallWithPet,
   DashboardSummary,
+  VisitPhoto,
 } from "./types";
 
 // ─── Recall status refresh ────────────────────────────────────────────────────
@@ -276,6 +277,22 @@ export async function getPet(id: number): Promise<PetDetail> {
     .eq("pet_id", id)
     .order("visit_date");
 
+    const visitIds = (visits ?? []).map((visit) => visit.id)
+
+let visitPhotos: VisitPhoto[] = []
+
+if (visitIds.length > 0) {
+  const { data: photos, error: photosError } = await supabase
+    .from("visit_photos")
+    .select("*")
+    .in("visit_id", visitIds)
+    .order("created_at", { ascending: true })
+
+  if (photosError) throw photosError
+
+  visitPhotos = (photos ?? []) as VisitPhoto[]
+}
+
   const { data: recalls } = await supabase
     .from("recalls")
     .select("*")
@@ -285,7 +302,10 @@ export async function getPet(id: number): Promise<PetDetail> {
   return {
     ...(pet as Pet),
     owner: owner as Owner,
-    visits: (visits ?? []) as Visit[],
+    visits: ((visits ?? []) as Visit[]).map((visit) => ({
+  ...visit,
+  photos: visitPhotos.filter((photo) => photo.visit_id === visit.id),
+})),
     recalls: (recalls ?? []) as Recall[],
   };
 }
@@ -584,4 +604,46 @@ export async function getDashboardSummary(): Promise<DashboardSummary> {
     totalOwners: ownersCountRes.count ?? 0,
     totalPets: petsCountRes.count ?? 0,
   };
+}
+export async function getVisitPhotos(
+  visitId: number
+): Promise<VisitPhoto[]> {
+  const { data, error } = await supabase
+    .from("visit_photos")
+    .select("*")
+    .eq("visit_id", visitId)
+    .order("created_at", { ascending: true })
+
+  if (error) throw error
+
+  return (data ?? []) as VisitPhoto[]
+}
+
+export async function createVisitPhoto(data: {
+  visit_id: number
+  photo_url: string
+  caption?: string | null
+}): Promise<VisitPhoto> {
+  const { data: createdPhoto, error } = await supabase
+    .from("visit_photos")
+    .insert({
+      visit_id: data.visit_id,
+      photo_url: data.photo_url,
+      caption: data.caption || null,
+    })
+    .select()
+    .single()
+
+  if (error) throw error
+
+  return createdPhoto as VisitPhoto
+}
+
+export async function deleteVisitPhoto(id: number): Promise<void> {
+  const { error } = await supabase
+    .from("visit_photos")
+    .delete()
+    .eq("id", id)
+
+  if (error) throw error
 }

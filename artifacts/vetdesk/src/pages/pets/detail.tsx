@@ -2,7 +2,15 @@ import { useState, useEffect } from "react"
 import { Shell } from "@/components/layout/Shell"
 import { useParams, Link } from "wouter"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
-import { getPet, updatePet, createVisit, createRecall, updateRecall } from "@/lib/api"
+import {
+  getPet,
+  updatePet,
+  createVisit,
+  createRecall,
+  updateRecall,
+  createVisitPhoto,
+  deleteVisitPhoto,
+} from "@/lib/api"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -21,6 +29,7 @@ import { z } from "zod"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from "@/components/ui/form"
+import {supabase} from "@/lib/supabase"
 
 const visitSchema = z.object({
   visit_date: z.string().trim().min(1, "Date is required"),
@@ -43,6 +52,7 @@ export default function PetDetail() {
   const petId = Number(id)
   const { toast } = useToast()
   const queryClient = useQueryClient()
+  const [uploadingVisitId, setUploadingVisitId] = useState<number | null>(null)
 
   const { data: petData, isLoading } = useQuery({
     queryKey: ["pet", petId],
@@ -112,6 +122,8 @@ export default function PetDetail() {
   const [isEditing, setIsEditing] = useState(false)
   const [visitModalOpen, setVisitModalOpen] = useState(false)
   const [recallModalOpen, setRecallModalOpen] = useState(false)
+  const [isUploadingPhoto, setIsUploadingPhoto] = useState(false)
+  const [photoInputKey, setPhotoInputKey] = useState(0)
 
   const [editData, setEditData] = useState({
     name: "", species: "dog", breed: "", sex: "unknown", birth_date: "", weight_lb: "", notes: ""
@@ -140,6 +152,143 @@ export default function PetDetail() {
     resolver: zodResolver(recallSchema),
     defaultValues: { recall_type: "", due_date: "", notes: "" },
   })
+  const handlePhotoUpload = async (
+  event: React.ChangeEvent<HTMLInputElement>
+) => {
+  const file = event.target.files?.[0]
+
+  if (!file) return
+
+  if (!file.type.startsWith("image/")) {
+    toast({
+      title: "Invalid file",
+      description: "Please select an image.",
+      variant: "destructive",
+    })
+    return
+  }
+
+  
+
+  if (file.size > 5 * 1024 * 1024) {
+    toast({
+      title: "Image is too large",
+      description: "Maximum image size is 5 MB.",
+      variant: "destructive",
+    })
+    return
+  }
+
+  try {
+    setIsUploadingPhoto(true)
+
+    const fileExtension = file.name.split(".").pop()?.toLowerCase() || "jpg"
+    const filePath = `pets/${petId}-${Date.now()}.${fileExtension}`
+
+    const { error: uploadError } = await supabase.storage
+      .from("pet-photos")
+      .upload(filePath, file, {
+        cacheControl: "3600",
+        upsert: false,
+      })
+
+    if (uploadError) {
+      throw uploadError
+    }
+
+    const { data: publicUrlData } = supabase.storage
+      .from("pet-photos")
+      .getPublicUrl(filePath)
+
+    await updatePet(petId, {
+      photo_url: publicUrlData.publicUrl,
+    })
+
+    await queryClient.invalidateQueries({
+      queryKey: ["pet", petId],
+    })
+
+    toast({
+      title: "Photo updated",
+      description: "The pet photo was uploaded successfully.",
+    })
+
+    setPhotoInputKey(previousKey => previousKey + 1)
+  } catch (error: any) {
+    toast({
+      title: "Photo upload failed",
+      description: error?.message || "The photo could not be uploaded.",
+      variant: "destructive",
+    })
+  } finally {
+    setIsUploadingPhoto(false)
+  }
+}
+
+const handleVisitPhotoUpload = async (
+  visitId: number,
+  event: React.ChangeEvent<HTMLInputElement>
+) => {
+  const files = Array.from(event.target.files ?? [])
+
+  if (files.length === 0) return
+
+  try {
+    setUploadingVisitId(visitId)
+
+    for (const file of files) {
+      if (!file.type.startsWith("image/")) {
+        throw new Error("Only image files are allowed.")
+      }
+
+      if (file.size > 5 * 1024 * 1024) {
+        throw new Error("Each image must be smaller than 5 MB.")
+      }
+
+      const extension = file.name.split(".").pop()?.toLowerCase() || "jpg"
+      const filePath = `visits/${visitId}/${Date.now()}-${Math.random()
+        .toString(36)
+        .slice(2)}.${extension}`
+
+      const { error: uploadError } = await supabase.storage
+        .from("pet-photos")
+        .upload(filePath, file, {
+          cacheControl: "3600",
+          upsert: false,
+        })
+
+      if (uploadError) throw uploadError
+
+      const { data: publicUrlData } = supabase.storage
+        .from("pet-photos")
+        .getPublicUrl(filePath)
+
+      await createVisitPhoto({
+        visit_id: visitId,
+        photo_url: publicUrlData.publicUrl,
+        caption: null,
+      })
+    }
+
+    await queryClient.invalidateQueries({
+      queryKey: ["pet", petId],
+    })
+
+    toast({
+      title: "Visit photos uploaded",
+    })
+
+    event.target.value = ""
+  } catch (error: any) {
+    toast({
+      title: "Photo upload failed",
+      description: error?.message || "The photos could not be uploaded.",
+      variant: "destructive",
+    })
+  } finally {
+    setUploadingVisitId(null)
+  }
+}
 
   if (isLoading) return <Shell><div className="p-8 flex justify-center"><Loader2 className="animate-spin text-muted-foreground w-8 h-8" /></div></Shell>
   if (!petData) return <Shell><div className="p-8 text-center">Pet not found.</div></Shell>
@@ -153,9 +302,43 @@ export default function PetDetail() {
           </Link>
           <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4 border-b pb-6">
             <div className="flex items-center gap-5">
-              <div className="h-20 w-20 rounded-full bg-primary/10 text-primary flex items-center justify-center shrink-0 border border-primary/20 shadow-sm">
-                <PawPrint className="w-10 h-10" />
-              </div>
+              <div className="relative shrink-0">
+  <div className="h-20 w-20 rounded-full bg-primary/10 text-primary flex items-center justify-center overflow-hidden border border-primary/20 shadow-sm">
+    {petData.photo_url ? (
+      <img
+        src={petData.photo_url}
+        alt={petData.name}
+        className="h-full w-full object-cover"
+      />
+    ) : (
+      <PawPrint className="w-10 h-10" />
+    )}
+  </div>
+
+  <label
+    htmlFor="pet-photo-upload"
+    className={`absolute -bottom-1 -right-1 h-7 w-7 rounded-full bg-primary text-primary-foreground flex items-center justify-center border-2 border-background shadow cursor-pointer ${
+      isUploadingPhoto ? "pointer-events-none opacity-60" : ""
+    }`}
+    title="Upload pet photo"
+  >
+    {isUploadingPhoto ? (
+      <Loader2 className="h-4 w-4 animate-spin" />
+    ) : (
+      <Plus className="h-4 w-4" />
+    )}
+  </label>
+
+  <input
+    key={photoInputKey}
+    id="pet-photo-upload"
+    type="file"
+    accept="image/*"
+    className="hidden"
+    onChange={handlePhotoUpload}
+    disabled={isUploadingPhoto}
+  />
+</div>
               <div>
                 <div className="flex items-center gap-3">
                   <h1 className="text-4xl font-extrabold tracking-tight text-foreground">{petData.name}</h1>
@@ -356,6 +539,74 @@ export default function PetDetail() {
                               <p className="text-sm leading-relaxed text-foreground/90 whitespace-pre-wrap">{visit.notes}</p>
                             </div>
                           )}
+                          <div className="pt-2 border-t">
+  <div className="flex items-center justify-between gap-3 mb-3">
+    <div className="text-xs uppercase font-bold tracking-wider text-muted-foreground">
+      Visit Photos
+    </div>
+
+    <label
+      htmlFor={`visit-photo-${visit.id}`}
+      className={`inline-flex items-center justify-center rounded-md text-sm font-medium h-9 px-3 border bg-background hover:bg-accent cursor-pointer ${
+        uploadingVisitId === visit.id
+          ? "pointer-events-none opacity-60"
+          : ""
+      }`}
+    >
+      {uploadingVisitId === visit.id ? (
+        <>
+          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+          Uploading...
+        </>
+      ) : (
+        <>
+          <Plus className="w-4 h-4 mr-2" />
+          Add Photos
+        </>
+      )}
+    </label>
+
+    <input
+      id={`visit-photo-${visit.id}`}
+      type="file"
+      accept="image/*"
+      multiple
+      className="hidden"
+      disabled={uploadingVisitId === visit.id}
+      onChange={(event) =>
+        handleVisitPhotoUpload(visit.id, event)
+      }
+    />
+  </div>
+
+  {visit.photos && visit.photos.length > 0 ? (
+    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+      {visit.photos.map((photo) => (
+        <div
+          key={photo.id}
+          className="overflow-hidden rounded-lg border bg-muted/20"
+        >
+          <img
+            src={photo.photo_url}
+            alt="Visit attachment"
+            className="h-32 w-full object-cover"
+          />
+
+          {photo.caption && (
+            <p className="p-2 text-xs text-muted-foreground">
+              {photo.caption}
+            </p>
+          )}
+        </div>
+      ))}
+    </div>
+  ) : (
+    <p className="text-sm text-muted-foreground">
+      No photos attached to this visit.
+    </p>
+  )}
+</div>
+
                         </CardContent>
                       </Card>
                     ))

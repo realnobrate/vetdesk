@@ -36,6 +36,7 @@ export interface Pet {
   birth_date: string | null;
   weight_lb: number | null;
   notes: string | null;
+  photo_url: string | null;
   created_at: string;
 }
 
@@ -49,6 +50,14 @@ export interface Visit {
   meds_prescribed: string | null;
   vaccines_administered: string[];
   vet_name: string | null;
+  created_at: string;
+  photos?: VisitPhoto[]
+}
+export interface VisitPhoto {
+  id: number;
+  visit_id: number;
+  photo_url: string;
+  caption: string | null;
   created_at: string;
 }
 
