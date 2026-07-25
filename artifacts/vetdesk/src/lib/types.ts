@@ -36,7 +36,7 @@ export interface Pet {
   birth_date: string | null;
   weight_lb: number | null;
   notes: string | null;
-  photo_url: string | null;
+  photo_url?: string | null;
   created_at: string;
 }
 

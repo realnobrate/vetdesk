@@ -352,9 +352,17 @@ export default function OwnerDetail() {
                   owner.pets.map(pet => (
                     <div key={pet.id} className="p-4 sm:p-5 hover:bg-muted/10 transition-colors flex flex-col gap-3 sm:flex-row sm:justify-between sm:items-center">
                       <div className="flex gap-4 items-center">
-                        <div className="w-12 h-12 rounded-full bg-primary/10 text-primary flex items-center justify-center shrink-0">
-                          <PawPrint className="w-6 h-6" />
-                        </div>
+                        <div className="w-12 h-12 rounded-full bg-primary/10 text-primary flex items-center justify-center overflow-hidden shrink-0">
+  {pet.photo_url ? (
+    <img
+      src={pet.photo_url}
+      alt={pet.name}
+      className="w-full h-full object-cover"
+    />
+  ) : (
+    <PawPrint className="w-6 h-6" />
+  )}
+</div>
                         <div>
                           <div className="font-semibold text-lg hover:text-primary transition-colors">
                             <Link href={`/pets/${pet.id}`}>{pet.name}</Link>
