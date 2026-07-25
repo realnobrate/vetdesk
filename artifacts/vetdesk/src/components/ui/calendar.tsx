@@ -35,18 +35,18 @@ function Calendar({
         ),
         month_grid: "w-full table-fixed border-collapse",
         weeks: "w-full",
-        weekdays: "w-full",
-        weekday: "w-[14.2857%] p-1 text-center text-[0.7rem] font-normal text-muted-foreground sm:text-[0.8rem]",
-        week: "w-full",
+        weekdays: "grid grid-cols-7",
+        weekday: "flex items-center justify-center p-1 text-center text-[0.7rem] font-normal text-muted-foreground sm:text-[0.8rem]",
+        week: "grid grid-cols-7",
         day: cn(
-          "relative w-[14.2857%] p-0 text-center text-sm focus-within:relative focus-within:z-20",
+          "relative p-0 text-center text-sm focus-within:relative focus-within:z-20",
           props.mode === "range"
             ? "[&:has(>.day-range-end)]:rounded-r-md [&:has(>.day-range-start)]:rounded-l-md first:[&:has([aria-selected])]:rounded-l-md last:[&:has([aria-selected])]:rounded-r-md"
             : "[&:has([aria-selected])]:rounded-md"
         ),
         day_button: cn(
           buttonVariants({ variant: "ghost" }),
-          "flex h-8 w-full items-center justify-center p-0 text-xs font-normal aria-selected:opacity-100 sm:h-8 sm:text-sm"
+          "flex h-8 w-8 items-center justify-center p-0 text-xs font-normal aria-selected:opacity-100 sm:h-8 sm:w-8 sm:text-sm"
         ),
         day_range_start: "day-range-start",
         day_range_end: "day-range-end",
