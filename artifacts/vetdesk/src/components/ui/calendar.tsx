@@ -24,14 +24,14 @@ function Calendar({
         month: "w-full space-y-2 sm:space-y-3",
         month_caption: "relative flex items-center justify-center px-8 py-1",
         caption_label: "text-sm font-medium",
-        nav: "absolute inset-x-0 top-1 flex items-center justify-between px-1",
+        nav: "absolute inset-x-0 top-1 flex h-8 items-center justify-between px-1",
         button_previous: cn(
           buttonVariants({ variant: "outline" }),
-          "h-7 w-7 bg-transparent p-0 opacity-70 hover:opacity-100"
+          "mr-auto h-7 w-7 bg-transparent p-0 opacity-70 hover:opacity-100"
         ),
         button_next: cn(
           buttonVariants({ variant: "outline" }),
-          "h-7 w-7 bg-transparent p-0 opacity-70 hover:opacity-100"
+          "ml-auto h-7 w-7 bg-transparent p-0 opacity-70 hover:opacity-100"
         ),
         month_grid: "w-full table-fixed border-collapse",
         weeks: "w-full",
