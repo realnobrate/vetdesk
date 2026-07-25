@@ -144,12 +144,12 @@ export default function AppointmentsList() {
                   <Plus className="w-4 h-4 mr-2" /> New Appointment
                 </Button>
               </DialogTrigger>
-              <DialogContent>
+              <DialogContent className="w-[95vw] max-w-[95vw] max-h-[90vh] overflow-y-auto overflow-x-hidden p-4 sm:max-w-lg sm:p-6">
                 <DialogHeader>
                   <DialogTitle>Schedule Appointment</DialogTitle>
                 </DialogHeader>
                 <Form {...form}>
-                  <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+                  <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4 overflow-x-hidden">
                     <FormField control={form.control} name="petId" render={({ field }) => (
                       <FormItem>
                         <FormLabel>Patient</FormLabel>
@@ -169,7 +169,7 @@ export default function AppointmentsList() {
                         <FormMessage />
                       </FormItem>
                     )} />
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                       <FormField control={form.control} name="date" render={({ field }) => (
                         <FormItem className="flex flex-col mt-2">
                           <FormLabel>Date</FormLabel>
