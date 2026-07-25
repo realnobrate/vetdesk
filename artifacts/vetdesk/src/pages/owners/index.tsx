@@ -2,6 +2,7 @@ import { useState } from "react"
 import { Shell } from "@/components/layout/Shell"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { listOwners, createOwner } from "@/lib/api"
+import { capitalize } from "@/lib/utils"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -66,13 +67,6 @@ export default function OwnersList() {
     resolver: zodResolver(ownerSchema),
     defaultValues: { first_name: "", last_name: "", phone: "", email: "", address: "" },
   })
-
-  const capitalize = (text: string) =>
-    text
-      .trim()
-      .split(" ")
-      .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
-      .join(" ");
 
   function onSubmit(values: z.infer<typeof ownerSchema>) {
     createMutation.mutate({

@@ -1,4 +1,5 @@
 import { supabase } from "./supabase";
+import { addMonths as addMonthsDateFns } from "date-fns";
 import type {
   Staff,
   Owner,
@@ -36,8 +37,8 @@ function resolveRecallMonths(name: string): number | null {
 
 function addMonths(isoDate: string, months: number): string {
   const d = new Date(isoDate);
-  d.setUTCMonth(d.getUTCMonth() + months);
-  return d.toISOString().slice(0, 10);
+  const result = addMonthsDateFns(d, months);
+  return result.toISOString().slice(0, 10);
 }
 
 // ─── Staff ────────────────────────────────────────────────────────────────────
@@ -161,19 +162,19 @@ export async function createOwner(
   if (!user) throw new Error("User is not authenticated");
 
   const { data: staff, error: staffError } = await supabase
-  .from("staff")
-  .select("clinic_id")
-  .eq("user_id", user.id)
-  .limit(1)
-  .maybeSingle();
+    .from("staff")
+    .select("clinic_id")
+    .eq("user_id", user.id)
+    .limit(1)
+    .maybeSingle();
 
-if (staffError) throw staffError;
+  if (staffError) throw staffError;
 
-if (!staff?.clinic_id) {
-  throw new Error(
-    "Your account is not connected to a clinic. Check the user_id in the staff table."
-  );
-}
+  if (!staff?.clinic_id) {
+    throw new Error(
+      "Your account is not connected to a clinic. Check the user_id in the staff table."
+    );
+  }
 
   const { data, error } = await supabase
     .from("owners")
