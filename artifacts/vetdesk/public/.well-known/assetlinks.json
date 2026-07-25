@@ -1,0 +1,8 @@
+[{
+      "relation": ["delegate_permission/common.handle_all_urls"],
+      "target": {
+        "namespace": "android_app",
+        "package_name": "com.realnobrate.vetdesk",
+        "sha256_cert_fingerprints": ["86:D6:58:88:DF:12:D2:07:EE:3B:40:35:9A:8C:8B:08:4A:4C:17:76:CB:3F:96:20:BC:A9:9C:50:7A:D9:A4:9D"]
+      }
+    }]
