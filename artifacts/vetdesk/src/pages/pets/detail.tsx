@@ -15,6 +15,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import type { Visit } from "@/lib/types"
+import jsPDF from "jspdf"
 import { Textarea } from "@/components/ui/textarea"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { formatDate } from "@/lib/format"
@@ -289,6 +291,79 @@ const handleVisitPhotoUpload = async (
     setUploadingVisitId(null)
   }
 }
+const generateVisitPdf = (visit:Visit) => {
+
+  if (!petData) return
+
+  const doc = new jsPDF()
+
+  doc.setFontSize(20)
+  doc.text("VetDesk Visit Report", 20, 20)
+
+  doc.setFontSize(12)
+
+  doc.text(`Pet: ${petData.name}`, 20, 35)
+  doc.text(
+    `Owner: ${petData.owner.first_name} ${petData.owner.last_name}`,
+    20,
+    43,
+  )
+  doc.text(`Species: ${petData.species}`, 20, 51)
+  doc.text(`Breed: ${petData.breed || "Not recorded"}`, 20, 59)
+  doc.text(`Visit date: ${formatDate(visit.visit_date)}`, 20, 67)
+  doc.text(`Reason: ${visit.reason}`, 20, 75)
+
+  let y = 87
+
+  if (visit.vet_name) {
+    doc.text(`Veterinarian: Dr. ${visit.vet_name}`, 20, y)
+    y += 8
+  }
+
+  if (visit.weight_lb) {
+    doc.text(`Weight: ${visit.weight_lb} lbs`, 20, y)
+    y += 8
+  }
+
+  if (visit.meds_prescribed) {
+    doc.text("Medications:", 20, y)
+    y += 7
+
+    const medicationLines = doc.splitTextToSize(
+      visit.meds_prescribed,
+      170
+    )
+
+    doc.text(medicationLines, 20, y)
+    y += medicationLines.length * 7 + 4
+  }
+
+  if (visit.vaccines_administered?.length) {
+    doc.text(
+      `Vaccines: ${visit.vaccines_administered.join(", ")}`,
+      20,
+      y
+    )
+    y += 8
+  }
+
+  if (visit.notes) {
+    doc.text("Clinical notes:", 20, y)
+    y += 7
+
+    const noteLines = doc.splitTextToSize(visit.notes, 170)
+
+    doc.text(noteLines, 20, y)
+  }
+
+  const safePetName = petData.name
+    .trim()
+    .replace(/[^a-zA-Z0-9-_]/g, "-")
+
+  doc.save(
+    `${safePetName}-visit-${visit.visit_date.split("T")[0]}.pdf`
+  )
+}
 
   if (isLoading) return <Shell><div className="p-8 flex justify-center"><Loader2 className="animate-spin text-muted-foreground w-8 h-8" /></div></Shell>
   if (!petData) return <Shell><div className="p-8 text-center">Pet not found.</div></Shell>
@@ -517,6 +592,13 @@ const handleVisitPhotoUpload = async (
                               {visit.weight_lb && <span>• {visit.weight_lb} lbs</span>}
                             </div>
                           </div>
+                          <Button
+  variant="outline"
+  size="sm"
+  onClick={() => generateVisitPdf(visit)}
+>
+  Download PDF
+</Button>
                         </CardHeader>
                         <CardContent className="p-5 space-y-4">
                           {visit.vaccines_administered?.length > 0 && (
