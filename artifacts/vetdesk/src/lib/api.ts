@@ -49,87 +49,76 @@ export async function getOrCreateStaff(): Promise<Staff> {
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user) throw new Error("Not authenticated");
 
-  const { data: existing } = await supabase
+  if (!user) {
+    throw new Error("Not authenticated");
+  }
+
+  const { data: existing, error: existingError } = await supabase
     .from("staff")
     .select("*")
     .eq("user_id", user.id)
     .maybeSingle();
 
-  if (existing) return existing as Staff;
+  if (existingError) {
+    throw existingError;
+  }
 
-  // JIT provision: first staff member creates a clinic and becomes admin
-  const { count } = await supabase
-    .from("staff")
-    .select("*", { count: "exact", head: true });
+  if (existing) {
+    return existing as Staff;
+  }
 
-  const isFirst = (count ?? 0) === 0;
   const name =
     user.user_metadata?.name ||
     user.user_metadata?.full_name ||
     user.email?.split("@")[0] ||
-    "Staff Member";
+    "Clinic Owner";
 
-  let clinicId: number;
-
-  if (isFirst) {
-    const { data: clinic, error: cErr } = await supabase
-      .from("clinics")
-      .insert({ name: `${name}'s Clinic` })
-      .select()
-      .single();
-    if (cErr || !clinic) throw new Error("Failed to create clinic");
-    clinicId = clinic.id;
-  } else {
-    const { data: clinic } = await supabase
-      .from("clinics")
-      .select("id")
-      .order("created_at")
-      .limit(1)
-      .maybeSingle();
-    if (!clinic) throw new Error("No clinic found");
-    clinicId = clinic.id;
-  }
-
-  const { data: created, error } = await supabase
-    .from("staff")
+  // Svaki novi korisnik dobija svoju kliniku
+  const { data: clinic, error: clinicError } = await supabase
+    .from("clinics")
     .insert({
-      user_id: user.id,
-      clinic_id: clinicId,
-      name,
-      email: user.email ?? "",
-      role: isFirst ? "admin" : "front_desk",
+      name: `${name}'s Clinic`,
     })
     .select()
     .single();
 
-  if (error || !created) throw new Error("Failed to create staff record");
-  return created as Staff;
-}
+  if (clinicError || !clinic) {
+    console.error("Clinic creation error:", clinicError);
+    throw new Error(
+      clinicError?.message || "Failed to create clinic"
+    );
+  }
 
-export async function listStaff(clinicId: number): Promise<Staff[]> {
-  const { data, error } = await supabase
+  // Novi korisnik postaje administrator svoje klinike
+  const { data: created, error: staffError } = await supabase
     .from("staff")
-    .select("*")
-    .eq("clinic_id", clinicId)
-    .order("created_at");
-  if (error) throw error;
-  return (data ?? []) as Staff[];
-}
-
-export async function updateStaff(
-  id: number,
-  update: { name?: string; role?: string }
-): Promise<Staff> {
-  const { data, error } = await supabase
-    .from("staff")
-    .update(update)
-    .eq("id", id)
+    .insert({
+      user_id: user.id,
+      clinic_id: clinic.id,
+      name,
+      email: user.email ?? "",
+      role: "admin",
+      status: "active",
+    })
     .select()
     .single();
-  if (error) throw error;
-  return data as Staff;
+
+  if (staffError || !created) {
+    console.error("Staff creation error:", staffError);
+
+    // Brišemo praznu kliniku ako staff zapis nije uspeo
+    await supabase
+      .from("clinics")
+      .delete()
+      .eq("id", clinic.id);
+
+    throw new Error(
+      staffError?.message || "Failed to create staff record"
+    );
+  }
+
+  return created as Staff;
 }
 
 // ─── Owners ───────────────────────────────────────────────────────────────────
