@@ -13,6 +13,7 @@ import type {
   RecallWithPet,
   DashboardSummary,
   VisitPhoto,
+  Clinic,
 } from "./types";
 
 // ─── Recall status refresh ────────────────────────────────────────────────────
@@ -670,4 +671,115 @@ export async function deleteVisitPhoto(id: number): Promise<void> {
     .eq("id", id)
 
   if (error) throw error
+}
+export async function getClinic(clinicId: number): Promise<Clinic> {
+  const { data, error } = await supabase
+    .from("clinics")
+    .select("*")
+    .eq("id", clinicId)
+    .single()
+
+  if (error) throw error
+
+  return data as Clinic
+}
+
+export async function updateClinic(
+  clinicId: number,
+  updates: Partial<
+    Omit<Clinic, "id" | "created_at">
+  >
+): Promise<Clinic> {
+  const { data, error } = await supabase
+    .from("clinics")
+    .update(updates)
+    .eq("id", clinicId)
+    .select()
+    .single()
+
+  if (error) throw error
+
+  return data as Clinic
+}
+export async function getClinicStaff(clinicId: number): Promise<Staff[]> {
+  const { data, error } = await supabase
+    .from("staff")
+    .select("*")
+    .eq("clinic_id", clinicId)
+    .order("created_at", { ascending: true })
+
+  if (error) throw error
+
+  return (data ?? []) as Staff[]
+}
+
+export async function updateStaffMember(
+  staffId: number,
+  updates: {
+    name?: string
+    role?: string
+    status?: "active" | "inactive"
+  }
+): Promise<Staff> {
+  const { data, error } = await supabase
+    .from("staff")
+    .update(updates)
+    .eq("id", staffId)
+    .select()
+    .single()
+
+  if (error) throw error
+
+  return data as Staff
+}
+export async function addStaffMember(input: {
+  clinic_id: number
+  name: string
+  email: string
+  role: string
+}): Promise<Staff> {
+  try {
+    console.log("Calling add_pending_staff:", input)
+
+    const response = await supabase.rpc("add_pending_staff", {
+      staff_name: input.name,
+      staff_email: input.email,
+      staff_role: input.role,
+    })
+
+    console.log("FULL RPC RESPONSE:", response)
+
+    const { data, error } = response
+
+    if (error) {
+      const detailedMessage = [
+        error.message,
+        error.details,
+        error.hint,
+        error.code,
+      ]
+        .filter(Boolean)
+        .join(" | ")
+
+      console.error("SUPABASE RPC ERROR:", error)
+
+      throw new Error(detailedMessage || JSON.stringify(error))
+    }
+
+    if (!data) {
+      throw new Error("Supabase returned no staff member data.")
+    }
+
+    return data as Staff
+  } catch (error) {
+    console.error("ADD STAFF FUNCTION ERROR:", error)
+
+    if (error instanceof Error) {
+      alert(`API error: ${error.message}`)
+      throw error
+    }
+
+    alert(`API error: ${JSON.stringify(error)}`)
+    throw new Error(JSON.stringify(error))
+  }
 }

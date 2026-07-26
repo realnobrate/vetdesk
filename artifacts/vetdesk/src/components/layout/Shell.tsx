@@ -5,24 +5,53 @@ import { useAuth } from "@/lib/auth"
 import { Activity, Calendar, Users, Bell, LogOut, Loader as Loader2, Menu } from "lucide-react"
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet"
 import { Button } from "@/components/ui/button"
+import { Settings } from "lucide-react"
+import { useQuery } from "@tanstack/react-query"
+import { getClinic } from "@/lib/api"
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: Activity },
   { href: "/appointments", label: "Appointments", icon: Calendar },
   { href: "/owners", label: "Owners & Pets", icon: Users },
   { href: "/recalls", label: "Recalls", icon: Bell },
+  {
+  href: "/staff",
+  label: "Staff",
+  icon: Users,
+},
+  {
+  label: "Clinic Settings",
+  href: "/clinic-settings",
+  icon: Settings,
+},
 ]
 
 function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const [location] = useLocation()
   const { signOut, staff, loading } = useAuth()
+  const clinicId = staff?.clinic_id ?? 0
+
+const { data: clinic } = useQuery({
+  queryKey: ["clinic", clinicId],
+  queryFn: () => getClinic(clinicId),
+  enabled: clinicId > 0,
+})
 
   return (
     <div className="flex h-full flex-col bg-sidebar text-sidebar-foreground">
-      <div className="h-16 flex items-center px-6 border-b border-sidebar-border/70 gap-3 shrink-0">
-        <img src="/logo.svg" alt="VetDesk logo" className="h-9 w-9" />
-        <span className="text-lg font-semibold tracking-tight text-white">VetDesk</span>
-      </div>
+    <div className="h-16 flex items-center px-6 border-b border-sidebar-border/70 gap-3 shrink-0">
+  <div className="h-9 w-9 rounded-lg overflow-hidden flex items-center justify-center bg-white/10 shrink-0">
+    <img
+      src={clinic?.logo_url || "/logo.svg"}
+      alt={`${clinic?.name || "VetDesk"} logo`}
+      className="h-full w-full object-cover"
+    />
+  </div>
+
+  <span className="text-lg font-semibold tracking-tight text-white truncate">
+    {clinic?.name || "VetDesk"}
+  </span>
+</div>
 
       <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
         {navItems.map((item) => {

@@ -4,6 +4,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider, useAuth } from "@/lib/auth";
+import ClinicSettings from "@/pages/clinic-settings";
+import StaffPage from "@/pages/staff";
 
 const Home = React.lazy(() => import("@/pages/home"));
 const Dashboard = React.lazy(() => import("@/pages/dashboard"));
@@ -108,7 +110,8 @@ function AppRoutes() {
         <React.Suspense fallback={<RouteLoadingFallback />}>
           <AuthenticatedRoute component={AppointmentsList} />
         </React.Suspense>
-      </Route>
+      </Route><Route path="/staff" component={StaffPage} />
+      <Route path="/clinic-settings" component={ClinicSettings} />
       <Route>
         <React.Suspense fallback={<RouteLoadingFallback />}>
           <NotFound />

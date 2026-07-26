@@ -111,3 +111,14 @@ export interface DashboardSummary {
   totalOwners: number;
   totalPets: number;
 }
+export interface Clinic {
+  id: number
+  name: string
+  logo_url: string | null
+  phone: string | null
+  email: string | null
+  address: string | null
+  website: string | null
+  working_hours: string | null
+  created_at: string
+}
