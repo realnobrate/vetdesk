@@ -68,57 +68,18 @@ export async function getOrCreateStaff(): Promise<Staff> {
     return existing as Staff;
   }
 
-  const name =
-    user.user_metadata?.name ||
-    user.user_metadata?.full_name ||
-    user.email?.split("@")[0] ||
-    "Clinic Owner";
-
-  // Svaki novi korisnik dobija svoju kliniku
-  const { data: clinic, error: clinicError } = await supabase
-    .from("clinics")
-    .insert({
-      name: `${name}'s Clinic`,
-    })
-    .select()
+  const { data, error } = await supabase
+    .rpc("provision_my_clinic")
     .single();
 
-  if (clinicError || !clinic) {
-    console.error("Clinic creation error:", clinicError);
+  if (error || !data) {
+    console.error("Provision clinic error:", error);
     throw new Error(
-      clinicError?.message || "Failed to create clinic"
+      error?.message || "Failed to create clinic account"
     );
   }
 
-  // Novi korisnik postaje administrator svoje klinike
-  const { data: created, error: staffError } = await supabase
-    .from("staff")
-    .insert({
-      user_id: user.id,
-      clinic_id: clinic.id,
-      name,
-      email: user.email ?? "",
-      role: "admin",
-      status: "active",
-    })
-    .select()
-    .single();
-
-  if (staffError || !created) {
-    console.error("Staff creation error:", staffError);
-
-    // Brišemo praznu kliniku ako staff zapis nije uspeo
-    await supabase
-      .from("clinics")
-      .delete()
-      .eq("id", clinic.id);
-
-    throw new Error(
-      staffError?.message || "Failed to create staff record"
-    );
-  }
-
-  return created as Staff;
+  return data as Staff;
 }
 
 // ─── Owners ───────────────────────────────────────────────────────────────────

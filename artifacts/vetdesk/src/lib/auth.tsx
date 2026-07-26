@@ -29,25 +29,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Get initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-      if (session?.user) {
-        (async () => {
-          try {
-            const s = await getOrCreateStaff();
-            setStaff(s);
-          } catch {
-            // Staff provisioning failure is non-fatal on initial load
-          } finally {
-            setLoading(false);
-          }
-        })();
-      } else {
-        setLoading(false);
-      }
-    });
+  supabase.auth.getSession().then(({ data: { session } }) => {
+    setSession(session);
+    setUser(session?.user ?? null);
+
+    if (session?.user) {
+      (async () => {
+        try {
+          const s = await getOrCreateStaff();
+          setStaff(s);
+        } catch (error) {
+          console.error("Failed to provision staff:", error);
+          setStaff(null);
+        } finally {
+          setLoading(false);
+        }
+      })();
+    } else {
+      setStaff(null);
+      setLoading(false);
+    }
+  });
+
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (_event, session) => {
@@ -58,15 +61,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setLoading(false);
         } else {
           (async () => {
-            try {
-              const s = await getOrCreateStaff();
-              setStaff(s);
-            } catch {
-              setStaff(null);
-            } finally {
-              setLoading(false);
-            }
-          })();
+  try {
+    const s = await getOrCreateStaff();
+    setStaff(s);
+  } catch (error) {
+    console.error("Failed to provision staff:", error);
+    setStaff(null);
+  } finally {
+    setLoading(false);
+  }
+})();
         }
       }
     );
