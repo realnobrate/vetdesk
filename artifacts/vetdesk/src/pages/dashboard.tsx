@@ -119,18 +119,18 @@ export default function Dashboard() {
                 </CardContent>
               </Card>
 
-              <Card className="border border-amber-500/10 bg-gradient-to-br from-amber-500/10 via-background to-background shadow-sm">
+              <Card className="border border-destructive/10 bg-gradient-to-br from-destructive/10 via-background to-background shadow-sm">
                 <CardHeader className="pb-3">
                   <CardTitle className="text-sm font-medium text-muted-foreground flex items-center justify-between">
-                    Upcoming Recalls
-                    <div className="rounded-full bg-amber-500/10 p-2 text-amber-600">
-                      <BellRing className="w-4 h-4" />
+                    Overdue Recalls
+                    <div className="rounded-full bg-destructive/10 p-2 text-destructive">
+                      <AlertTriangle className="w-4 h-4" />
                     </div>
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="text-3xl font-semibold text-foreground">{data.upcomingRecallsCount}</div>
-                  <p className="mt-1 text-sm text-muted-foreground">Pending follow-up</p>
+                  <div className="text-3xl font-semibold text-foreground">{data.overdueRecalls.length}</div>
+                  <p className="mt-1 text-sm text-muted-foreground">Action required</p>
                 </CardContent>
               </Card>
             </div>

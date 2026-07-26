@@ -365,6 +365,194 @@ const generateVisitPdf = (visit:Visit) => {
   )
 }
 
+const generateFullHistoryPdf = () => {
+  if (!petData) return
+
+  const doc = new jsPDF()
+  let y = 20
+  const pageWidth = doc.internal.pageSize.getWidth()
+  const pageHeight = doc.internal.pageSize.getHeight()
+  const margin = 20
+  const contentWidth = pageWidth - 2 * margin
+
+  const addPageIfNeeded = (requiredSpace: number) => {
+    if (y + requiredSpace > pageHeight - margin) {
+      doc.addPage()
+      y = margin
+    }
+  }
+
+  // Header
+  doc.setFontSize(20)
+  doc.text("VetDesk Full History Report", margin, y)
+  y += 15
+
+  doc.setFontSize(12)
+
+  // Pet Information
+  doc.setFontSize(14)
+  doc.setFont("helvetica", "bold")
+  doc.text("Pet Information", margin, y)
+  y += 10
+  doc.setFontSize(12)
+  doc.setFont("helvetica", "normal")
+
+  const petInfo = [
+    `Name: ${petData.name}`,
+    `Owner: ${petData.owner.first_name} ${petData.owner.last_name}`,
+    `Species: ${petData.species}`,
+    `Breed: ${petData.breed || "Not recorded"}`,
+    `Sex: ${petData.sex || "Unknown"}`,
+    `Birth Date: ${formatDate(petData.birth_date) || "Unknown"}`,
+    `Current Weight: ${petData.weight_lb ? `${petData.weight_lb} lbs` : "Not recorded"}`,
+  ]
+
+  petInfo.forEach(line => {
+    addPageIfNeeded(7)
+    doc.text(line, margin, y)
+    y += 7
+  })
+
+  // Chart Notes
+  if (petData.notes) {
+    addPageIfNeeded(15)
+    y += 5
+    doc.setFontSize(14)
+    doc.setFont("helvetica", "bold")
+    doc.text("Chart Notes", margin, y)
+    y += 10
+    doc.setFontSize(12)
+    doc.setFont("helvetica", "normal")
+
+    addPageIfNeeded(7)
+    const noteLines = doc.splitTextToSize(petData.notes, contentWidth)
+    doc.text(noteLines, margin, y)
+    y += noteLines.length * 7 + 10
+  }
+
+  // Visits
+  addPageIfNeeded(15)
+  doc.setFontSize(14)
+  doc.setFont("helvetica", "bold")
+  doc.text("Visit History", margin, y)
+  y += 10
+  doc.setFontSize(12)
+  doc.setFont("helvetica", "normal")
+
+  const sortedVisits = [...petData.visits].sort((a, b) => new Date(b.visit_date).getTime() - new Date(a.visit_date).getTime())
+
+  if (sortedVisits.length === 0) {
+    addPageIfNeeded(7)
+    doc.text("No visits recorded.", margin, y)
+    y += 7
+  } else {
+    sortedVisits.forEach((visit, index) => {
+      addPageIfNeeded(25)
+
+      // Visit separator
+      if (index > 0) {
+        y += 5
+        doc.setDrawColor(200)
+        doc.line(margin, y, pageWidth - margin, y)
+        y += 10
+      }
+
+      doc.setFont("helvetica", "bold")
+      doc.text(`Visit #${sortedVisits.length - index} - ${formatDate(visit.visit_date)}`, margin, y)
+      y += 7
+      doc.setFont("helvetica", "normal")
+
+      doc.text(`Reason: ${visit.reason}`, margin, y)
+      y += 7
+
+      if (visit.vet_name) {
+        doc.text(`Veterinarian: Dr. ${visit.vet_name}`, margin, y)
+        y += 7
+      }
+
+      if (visit.weight_lb) {
+        doc.text(`Weight: ${visit.weight_lb} lbs`, margin, y)
+        y += 7
+      }
+
+      if (visit.vaccines_administered?.length) {
+        addPageIfNeeded(7)
+        doc.text(`Vaccines: ${visit.vaccines_administered.join(", ")}`, margin, y)
+        y += 7
+      }
+
+      if (visit.meds_prescribed) {
+        addPageIfNeeded(7)
+        doc.text("Medications:", margin, y)
+        y += 5
+        const medLines = doc.splitTextToSize(visit.meds_prescribed, contentWidth)
+        doc.text(medLines, margin, y)
+        y += medLines.length * 7 + 5
+      }
+
+      if (visit.notes) {
+        addPageIfNeeded(7)
+        doc.text("Clinical Notes:", margin, y)
+        y += 5
+        const noteLines = doc.splitTextToSize(visit.notes, contentWidth)
+        doc.text(noteLines, margin, y)
+        y += noteLines.length * 7 + 5
+      }
+    })
+  }
+
+  // Recalls
+  addPageIfNeeded(15)
+  y += 5
+  doc.setFontSize(14)
+  doc.setFont("helvetica", "bold")
+  doc.text("Recalls & Preventative Care", margin, y)
+  y += 10
+  doc.setFontSize(12)
+  doc.setFont("helvetica", "normal")
+
+  const sortedRecalls = [...petData.recalls].sort((a, b) => new Date(a.due_date).getTime() - new Date(b.due_date).getTime())
+
+  if (sortedRecalls.length === 0) {
+    addPageIfNeeded(7)
+    doc.text("No recalls recorded.", margin, y)
+    y += 7
+  } else {
+    sortedRecalls.forEach((recall, index) => {
+      addPageIfNeeded(20)
+
+      if (index > 0) {
+        y += 5
+        doc.setDrawColor(200)
+        doc.line(margin, y, pageWidth - margin, y)
+        y += 10
+      }
+
+      doc.setFont("helvetica", "bold")
+      doc.text(`${recall.recall_type}`, margin, y)
+      y += 7
+      doc.setFont("helvetica", "normal")
+
+      doc.text(`Due Date: ${formatDate(recall.due_date)}`, margin, y)
+      y += 7
+      doc.text(`Status: ${recall.status}`, margin, y)
+      y += 7
+
+      if (recall.notes) {
+        addPageIfNeeded(7)
+        doc.text(`Notes: ${recall.notes}`, margin, y)
+        y += 7
+      }
+    })
+  }
+
+  const safePetName = petData.name
+    .trim()
+    .replace(/[^a-zA-Z0-9-_]/g, "-")
+
+  doc.save(`${safePetName}-full-history.pdf`)
+}
+
   if (isLoading) return <Shell><div className="p-8 flex justify-center"><Loader2 className="animate-spin text-muted-foreground w-8 h-8" /></div></Shell>
   if (!petData) return <Shell><div className="p-8 text-center">Pet not found.</div></Shell>
 
@@ -433,9 +621,14 @@ const generateVisitPdf = (visit:Visit) => {
                 </div>
               </div>
             </div>
-            <Button onClick={() => setIsEditing(!isEditing)} variant={isEditing ? "outline" : "secondary"} className="w-full sm:w-auto">
-              {isEditing ? "Cancel Edit" : "Edit Chart Details"}
-            </Button>
+            <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+              <Button onClick={generateFullHistoryPdf} variant="outline" className="w-full sm:w-auto">
+                Download Full History PDF
+              </Button>
+              <Button onClick={() => setIsEditing(!isEditing)} variant={isEditing ? "outline" : "secondary"} className="w-full sm:w-auto">
+                {isEditing ? "Cancel Edit" : "Edit Chart Details"}
+              </Button>
+            </div>
           </div>
         </div>
 

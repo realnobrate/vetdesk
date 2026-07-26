@@ -1,7 +1,7 @@
-import { useState } from "react"
+import { useState, useMemo } from "react"
 import { Shell } from "@/components/layout/Shell"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
-import { listOwners, createOwner } from "@/lib/api"
+import { listOwnersWithPets, createOwner } from "@/lib/api"
 import { capitalize } from "@/lib/utils"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -11,7 +11,7 @@ import { EmptyState } from "@/components/ui/empty-state"
 import { useDebounce } from "@/hooks/use-debounce"
 import { formatDate } from "@/lib/format"
 import { Link, useLocation } from "wouter"
-import { Search, Plus, Loader as Loader2, ChevronRight, User } from "lucide-react"
+import { Search, Plus, Loader as Loader2, ChevronRight, User, PawPrint } from "lucide-react"
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog"
@@ -20,6 +20,7 @@ import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form"
 import { useToast } from "@/components/ui/use-toast"
+import type { OwnerWithPets } from "@/lib/types"
 
 const ownerSchema = z.object({
   first_name: z.string().trim().min(1, "First name is required"),
@@ -37,10 +38,30 @@ export default function OwnersList() {
   const { toast } = useToast()
   const [createOpen, setCreateOpen] = useState(false)
 
-  const { data: owners, isLoading } = useQuery({
-    queryKey: ["owners", debouncedSearch],
-    queryFn: () => listOwners(debouncedSearch || undefined),
+  const { data: ownersWithPets, isLoading } = useQuery({
+    queryKey: ["owners-with-pets"],
+    queryFn: () => listOwnersWithPets(),
   })
+
+  const filteredOwners = useMemo(() => {
+    if (!ownersWithPets) return []
+    if (!debouncedSearch.trim()) return ownersWithPets
+
+    const searchLower = debouncedSearch.toLowerCase()
+    return ownersWithPets.filter((owner) => {
+      const matchesOwner =
+        owner.first_name.toLowerCase().includes(searchLower) ||
+        owner.last_name.toLowerCase().includes(searchLower) ||
+        (owner.email && owner.email.toLowerCase().includes(searchLower)) ||
+        owner.phone.includes(searchLower)
+
+      const matchesPet = owner.pets.some((pet) =>
+        pet.name.toLowerCase().includes(searchLower)
+      )
+
+      return matchesOwner || matchesPet
+    })
+  }, [ownersWithPets, debouncedSearch])
 
   const createMutation = useMutation({
     mutationFn: (values: z.infer<typeof ownerSchema>) =>
@@ -53,7 +74,7 @@ export default function OwnersList() {
       }),
     onSuccess: (newOwner) => {
       toast({ title: "Owner created successfully" })
-      queryClient.invalidateQueries({ queryKey: ["owners"] })
+      queryClient.invalidateQueries({ queryKey: ["owners-with-pets"] })
       setCreateOpen(false)
       form.reset()
       setLocation(`/owners/${newOwner.id}`)
@@ -156,14 +177,14 @@ export default function OwnersList() {
               <div className="relative flex-1 max-w-xl">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
-                  placeholder="Search by name, email, or phone..."
+                  placeholder="Search by name, email, phone, or pet name..."
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   className="pl-9 bg-background h-11"
                 />
               </div>
               <div className="text-sm text-muted-foreground">
-                {debouncedSearch ? `Showing ${owners?.length ?? 0} result${(owners?.length ?? 0) === 1 ? "" : "s"}` : "Browse all clients"}
+                {debouncedSearch ? `Showing ${filteredOwners.length} result${filteredOwners.length === 1 ? "" : "s"}` : "Browse all clients"}
               </div>
             </div>
           </div>
@@ -172,12 +193,19 @@ export default function OwnersList() {
             <div className="p-10 flex justify-center text-muted-foreground">
               <Loader2 className="w-6 h-6 animate-spin" />
             </div>
-          ) : !owners || owners.length === 0 ? (
+          ) : !ownersWithPets || ownersWithPets.length === 0 ? (
             <div className="p-8 sm:p-10">
               <EmptyState
-                title={debouncedSearch ? "No owners found" : "No owners yet"}
-                description={debouncedSearch ? `No results match "${debouncedSearch}".` : "Get started by adding your first client."}
-                action={!debouncedSearch ? <Button variant="outline" onClick={() => setCreateOpen(true)}>Add first owner</Button> : undefined}
+                title="No owners yet"
+                description="Get started by adding your first client."
+                action={<Button variant="outline" onClick={() => setCreateOpen(true)}>Add first owner</Button>}
+              />
+            </div>
+          ) : filteredOwners.length === 0 ? (
+            <div className="p-8 sm:p-10">
+              <EmptyState
+                title="No matches found"
+                description={`No results match "${debouncedSearch}". Try a different search term.`}
               />
             </div>
           ) : (
@@ -188,12 +216,13 @@ export default function OwnersList() {
                     <TableRow>
                       <TableHead>Name</TableHead>
                       <TableHead>Contact</TableHead>
+                      <TableHead>Pets</TableHead>
                       <TableHead>Added</TableHead>
                       <TableHead className="w-[50px]"></TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {owners.map(owner => (
+                    {filteredOwners.map(owner => (
                       <TableRow key={owner.id} className="cursor-pointer group" onClick={() => setLocation(`/owners/${owner.id}`)}>
                         <TableCell>
                           <div className="font-semibold text-foreground flex items-center gap-2">
@@ -209,6 +238,25 @@ export default function OwnersList() {
                             {owner.email && <div className="text-muted-foreground text-xs">{owner.email}</div>}
                           </div>
                         </TableCell>
+                        <TableCell>
+                          <div className="text-sm">
+                            {owner.pets.length > 0 ? (
+                              <div className="flex flex-wrap gap-1">
+                                {owner.pets.slice(0, 3).map(pet => (
+                                  <span key={pet.id} className="inline-flex items-center gap-1 text-xs bg-muted/50 px-2 py-0.5 rounded-full">
+                                    <PawPrint className="w-3 h-3" />
+                                    {pet.name}
+                                  </span>
+                                ))}
+                                {owner.pets.length > 3 && (
+                                  <span className="text-xs text-muted-foreground">+{owner.pets.length - 3}</span>
+                                )}
+                              </div>
+                            ) : (
+                              <span className="text-muted-foreground text-xs">No pets</span>
+                            )}
+                          </div>
+                        </TableCell>
                         <TableCell className="text-muted-foreground text-sm">
                           {formatDate(owner.created_at)}
                         </TableCell>
@@ -222,7 +270,7 @@ export default function OwnersList() {
               </div>
 
               <div className="md:hidden divide-y">
-                {owners.map(owner => (
+                {filteredOwners.map(owner => (
                   <button
                     key={owner.id}
                     type="button"
@@ -236,6 +284,19 @@ export default function OwnersList() {
                       <div>
                         <div className="font-semibold text-foreground">{owner.first_name} {owner.last_name}</div>
                         <div className="text-sm text-muted-foreground">{owner.phone}</div>
+                        {owner.pets.length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            {owner.pets.slice(0, 2).map(pet => (
+                              <span key={pet.id} className="inline-flex items-center gap-1 text-xs bg-muted/50 px-2 py-0.5 rounded-full">
+                                <PawPrint className="w-3 h-3" />
+                                {pet.name}
+                              </span>
+                            ))}
+                            {owner.pets.length > 2 && (
+                              <span className="text-xs text-muted-foreground">+{owner.pets.length - 2}</span>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </div>
                     <ChevronRight className="h-5 w-5 text-muted-foreground" />

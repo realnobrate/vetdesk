@@ -151,6 +151,30 @@ export async function listOwners(search?: string): Promise<Owner[]> {
   return (data ?? []) as Owner[];
 }
 
+export async function listOwnersWithPets(): Promise<OwnerWithPets[]> {
+  const { data: owners, error } = await supabase
+    .from("owners")
+    .select("*")
+    .order("last_name")
+    .order("first_name");
+
+  if (error) throw error;
+
+  const ownersWithPets = await Promise.all(
+    (owners ?? []).map(async (owner) => {
+      const { data: pets } = await supabase
+        .from("pets")
+        .select("*")
+        .eq("owner_id", owner.id)
+        .order("name");
+
+      return { ...(owner as Owner), pets: (pets ?? []) as Pet[] };
+    })
+  );
+
+  return ownersWithPets;
+}
+
 export async function createOwner(
   input: Omit<Owner, "id" | "clinic_id" | "created_at">
 ): Promise<Owner> {
