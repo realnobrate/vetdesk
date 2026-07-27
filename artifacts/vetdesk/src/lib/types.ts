@@ -13,6 +13,7 @@ export interface Staff {
   email: string;
   role: "admin" | "vet" | "front_desk";
   created_at: string;
+  status: "active" | "inactive" | "pending";
 }
 
 export interface Owner {

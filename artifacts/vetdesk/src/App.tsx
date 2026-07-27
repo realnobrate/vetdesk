@@ -1,6 +1,14 @@
 import * as React from "react";
-import { Switch, Route, Redirect, Router as WouterRouter } from "wouter";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  Switch,
+  Route,
+  Redirect,
+  Router as WouterRouter,
+} from "wouter";
+import {
+  QueryClient,
+  QueryClientProvider,
+} from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider, useAuth } from "@/lib/auth";
@@ -17,6 +25,7 @@ const AppointmentsList = React.lazy(() => import("@/pages/appointments"));
 const NotFound = React.lazy(() => import("@/pages/not-found"));
 const SignInPage = React.lazy(() => import("@/pages/sign-in"));
 const SignUpPage = React.lazy(() => import("@/pages/sign-up"));
+const BillingPage = React.lazy(() => import("@/pages/billing"));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -27,24 +36,74 @@ const queryClient = new QueryClient({
   },
 });
 
-function AuthenticatedRoute({ component: Component }: { component: React.ComponentType }) {
-  const { session, loading } = useAuth();
-  if (loading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
-      </div>
-    );
+function FullPageSpinner() {
+  return (
+    <div className="flex min-h-screen items-center justify-center">
+      <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+    </div>
+  );
+}
+
+function AuthenticatedRoute({
+  component: Component,
+}: {
+  component: React.ComponentType;
+}) {
+  const {
+    session,
+    loading,
+    hasActiveSubscription,
+    subscriptionLoading,
+  } = useAuth();
+
+  if (loading || subscriptionLoading) {
+    return <FullPageSpinner />;
   }
-  if (!session) return <Redirect to="/sign-in" />;
+
+  if (!session) {
+    return <Redirect to="/sign-in" />;
+  }
+
+  if (!hasActiveSubscription) {
+    return <Redirect to="/billing" />;
+  }
+
   return <Component />;
 }
 
-function HomeRedirect() {
+function BillingRoute() {
   const { session, loading } = useAuth();
-  if (loading) return null;
-  if (session) return <Redirect to="/dashboard" />;
-  return <Home />;
+
+  if (loading) {
+    return <FullPageSpinner />;
+  }
+
+  if (!session) {
+    return <Redirect to="/sign-in" />;
+  }
+
+  return <BillingPage />;
+}function HomeRedirect() {
+  const {
+    session,
+    loading,
+    hasActiveSubscription,
+    subscriptionLoading,
+  } = useAuth();
+
+  if (loading || subscriptionLoading) {
+    return <FullPageSpinner />;
+  }
+
+  if (!session) {
+    return <Home />;
+  }
+
+  if (!hasActiveSubscription) {
+    return <Redirect to="/billing" />;
+  }
+
+  return <Redirect to="/dashboard" />;
 }
 
 function RouteLoadingFallback() {
@@ -71,47 +130,67 @@ function AppRoutes() {
           <HomeRedirect />
         </React.Suspense>
       </Route>
+
       <Route path="/sign-in">
         <React.Suspense fallback={<RouteLoadingFallback />}>
           <SignInPage />
         </React.Suspense>
       </Route>
+
       <Route path="/sign-up">
         <React.Suspense fallback={<RouteLoadingFallback />}>
           <SignUpPage />
         </React.Suspense>
       </Route>
+
+      <Route path="/billing">
+        <React.Suspense fallback={<RouteLoadingFallback />}>
+          <BillingRoute />
+        </React.Suspense>
+      </Route>
+
       <Route path="/dashboard">
         <React.Suspense fallback={<RouteLoadingFallback />}>
           <AuthenticatedRoute component={Dashboard} />
         </React.Suspense>
       </Route>
+
       <Route path="/owners">
         <React.Suspense fallback={<RouteLoadingFallback />}>
           <AuthenticatedRoute component={OwnersList} />
         </React.Suspense>
       </Route>
+
       <Route path="/owners/:id">
         <React.Suspense fallback={<RouteLoadingFallback />}>
           <AuthenticatedRoute component={OwnerDetail} />
         </React.Suspense>
       </Route>
+
       <Route path="/pets/:id">
         <React.Suspense fallback={<RouteLoadingFallback />}>
           <AuthenticatedRoute component={PetDetail} />
         </React.Suspense>
-      </Route>
-      <Route path="/recalls">
+      </Route><Route path="/recalls">
         <React.Suspense fallback={<RouteLoadingFallback />}>
           <AuthenticatedRoute component={RecallsList} />
         </React.Suspense>
       </Route>
+
       <Route path="/appointments">
         <React.Suspense fallback={<RouteLoadingFallback />}>
           <AuthenticatedRoute component={AppointmentsList} />
         </React.Suspense>
-      </Route><Route path="/staff" component={StaffPage} />
-      <Route path="/clinic-settings" component={ClinicSettings} />
+      </Route>
+
+      <Route path="/staff">
+        <AuthenticatedRoute component={StaffPage} />
+      </Route>
+
+      <Route path="/clinic-settings">
+        <AuthenticatedRoute component={ClinicSettings} />
+      </Route>
+
       <Route>
         <React.Suspense fallback={<RouteLoadingFallback />}>
           <NotFound />
