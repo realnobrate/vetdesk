@@ -28,6 +28,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter,
 } from "@/components/ui/dialog"
 import { z } from "zod"
+import { useAuth } from "@/lib/auth"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from "@/components/ui/form"
@@ -55,6 +56,7 @@ export default function PetDetail() {
   const { toast } = useToast()
   const queryClient = useQueryClient()
   const [uploadingVisitId, setUploadingVisitId] = useState<number | null>(null)
+  const { staff } = useAuth()
 
   const { data: petData, isLoading } = useQuery({
     queryKey: ["pet", petId],
@@ -98,6 +100,7 @@ export default function PetDetail() {
     mutationFn: (values: z.infer<typeof recallSchema>) =>
       createRecall({
         pet_id: petId,
+        clinic_id: staff?.clinic_id ?? 0,
         recall_type: values.recall_type,
         due_date: values.due_date,
         status: "upcoming",

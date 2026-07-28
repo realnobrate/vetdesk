@@ -1,24 +1,32 @@
 import { useMemo, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { Shell } from "@/components/layout/Shell"
-import { getDashboardSummary, listOwners, listPets } from "@/lib/api"
+import { getDashboardSummary, listOwners, listPets, getEmailStatistics } from "@/lib/api"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { formatDate } from "@/lib/format"
-import { CalendarClock, BellRing, Users, PawPrint, TriangleAlert as AlertTriangle, ArrowRight, Search } from "lucide-react"
+import { CalendarClock, BellRing, Users, PawPrint, TriangleAlert as AlertTriangle, ArrowRight, Search, Mail } from "lucide-react"
 import { Link } from "wouter"
 import { EmptyState } from "@/components/ui/empty-state"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { useDebounce } from "@/hooks/use-debounce"
+import { useAuth } from "@/lib/auth"
 
 export default function Dashboard() {
   const [searchTerm, setSearchTerm] = useState("")
   const debouncedSearch = useDebounce(searchTerm, 250)
+  const { staff } = useAuth()
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["dashboard-summary"],
     queryFn: () => getDashboardSummary(),
+  })
+
+  const { data: emailStats } = useQuery({
+    queryKey: ["email-statistics", staff?.clinic_id],
+    queryFn: () => getEmailStatistics(staff?.clinic_id ?? 0),
+    enabled: !!staff?.clinic_id,
   })
 
   const { data: ownersData } = useQuery({
@@ -73,7 +81,7 @@ export default function Dashboard() {
           />
         ) : (
           <>
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 sm:gap-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4 sm:gap-6">
               <Card className="border border-primary/10 bg-gradient-to-br from-primary/10 via-background to-background shadow-sm">
                 <CardHeader className="pb-3">
                   <CardTitle className="text-sm font-medium text-muted-foreground flex items-center justify-between">
@@ -133,6 +141,36 @@ export default function Dashboard() {
                   <p className="mt-1 text-sm text-muted-foreground">Action required</p>
                 </CardContent>
               </Card>
+
+              {emailStats && (
+                <Card className="border border-violet-500/10 bg-gradient-to-br from-violet-500/10 via-background to-background shadow-sm">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm font-medium text-muted-foreground flex items-center justify-between">
+                      Email Notifications
+                      <div className="rounded-full bg-violet-500/10 p-2 text-violet-600">
+                        <Mail className="w-4 h-4" />
+                      </div>
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-3xl font-semibold text-foreground">{emailStats.emails_sent_today}</div>
+                    <p className="mt-1 text-sm text-muted-foreground">Sent today</p>
+                    <div className="mt-2 space-y-1">
+                      <p className="text-xs text-muted-foreground">
+                        {emailStats.upcoming_reminders} pending reminders
+                      </p>
+                      {emailStats.failed_emails > 0 && (
+                        <p className="text-xs text-destructive">{emailStats.failed_emails} failed</p>
+                      )}
+                      {emailStats.last_successful_email && (
+                        <p className="text-xs text-muted-foreground">
+                          Last sent: {new Date(emailStats.last_successful_email).toLocaleDateString()}
+                        </p>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
             </div>
 
             <Card className="shadow-sm border-0 bg-card/80">

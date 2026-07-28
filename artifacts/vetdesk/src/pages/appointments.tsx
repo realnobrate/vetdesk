@@ -23,6 +23,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { DatePicker } from "@/components/ui/date-picker"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useDebounce } from "@/hooks/use-debounce"
+import { useAuth } from "@/lib/auth"
 
 const apptSchema = z.object({
   petId: z.coerce.number().min(1, "Patient is required"),
@@ -43,6 +44,7 @@ export default function AppointmentsList() {
   const [createOpen, setCreateOpen] = useState(false)
   const [petSearch, setPetSearch] = useState("")
   const debouncedPetSearch = useDebounce(petSearch, 300)
+  const { staff } = useAuth()
 
   const { data: appointments, isLoading, isError } = useQuery({
     queryKey: ["appointments", dateStr],
@@ -113,8 +115,10 @@ export default function AppointmentsList() {
 
     createMutation.mutate({
       pet_id: values.petId,
+      clinic_id: staff?.clinic_id ?? 0,
       reason: values.reason,
       scheduled_at: combinedDate.toISOString(),
+      vet_name: null,
     })
   }
 

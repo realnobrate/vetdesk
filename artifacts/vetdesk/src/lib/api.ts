@@ -14,6 +14,9 @@ import type {
   DashboardSummary,
   VisitPhoto,
   Clinic,
+  NotificationQueue,
+  SentEmail,
+  EmailStatistics,
 } from "./types";
 
 // ─── Recall status refresh ────────────────────────────────────────────────────
@@ -416,7 +419,61 @@ export async function createRecall(
     .select()
     .single();
   if (error) throw error;
-  return data as Recall;
+  
+  const recall = data as Recall;
+  
+  // Schedule vaccine reminders if enabled
+  try {
+    const { data: clinic } = await supabase
+      .from("clinics")
+      .select("recall_reminders_enabled, recall_reminder_days_before")
+      .eq("id", recall.clinic_id)
+      .single();
+    
+    if (clinic?.recall_reminders_enabled && recall.due_date) {
+      const dueDate = new Date(recall.due_date);
+      const daysBefore = clinic.recall_reminder_days_before || 7;
+      
+      // Schedule reminder X days before due date
+      const reminderDateBefore = new Date(dueDate.getTime() - daysBefore * 24 * 60 * 60 * 1000);
+      if (reminderDateBefore > new Date()) {
+        await supabase.from("notification_queue").insert({
+          clinic_id: recall.clinic_id,
+          type: "vaccine_reminder",
+          target_id: recall.id,
+          scheduled_for: reminderDateBefore.toISOString(),
+          status: "pending"
+        });
+      }
+      
+      // Schedule reminder on due date
+      if (dueDate > new Date()) {
+        await supabase.from("notification_queue").insert({
+          clinic_id: recall.clinic_id,
+          type: "vaccine_reminder",
+          target_id: recall.id,
+          scheduled_for: dueDate.toISOString(),
+          status: "pending"
+        });
+      }
+      
+      // Schedule reminder 7 days after due date
+      const overdueDate = new Date(dueDate.getTime() + 7 * 24 * 60 * 60 * 1000);
+      if (overdueDate > new Date()) {
+        await supabase.from("notification_queue").insert({
+          clinic_id: recall.clinic_id,
+          type: "vaccine_reminder",
+          target_id: recall.id,
+          scheduled_for: overdueDate.toISOString(),
+          status: "pending"
+        });
+      }
+    }
+  } catch (err) {
+    console.error("Failed to schedule vaccine reminders:", err);
+  }
+  
+  return recall;
 }
 
 export async function updateRecall(
@@ -425,6 +482,15 @@ export async function updateRecall(
     Omit<Recall, "id" | "pet_id" | "visit_id" | "created_at">
   >
 ): Promise<Recall> {
+  // Fetch existing recall first
+  const { data: existing } = await supabase
+    .from("recalls")
+    .select("*")
+    .eq("id", id)
+    .single();
+  
+  if (!existing) throw new Error("Recall not found");
+  
   const patch: Record<string, unknown> = { ...update };
   if (update.status === "sent") patch.sent_at = new Date().toISOString();
   if (update.status === "completed")
@@ -437,7 +503,82 @@ export async function updateRecall(
     .select()
     .single();
   if (error) throw error;
-  return data as Recall;
+  
+  const recall = data as Recall;
+  
+  // Cancel existing pending reminders if recall is completed
+  if (update.status === "completed") {
+    await supabase
+      .from("notification_queue")
+      .update({ status: "cancelled", error_message: "Recall completed" })
+      .eq("type", "vaccine_reminder")
+      .eq("target_id", id)
+      .eq("status", "pending");
+  }
+  
+  // Reschedule reminders if due date changed
+  if (update.due_date && existing.due_date !== update.due_date) {
+    try {
+      const { data: clinic } = await supabase
+        .from("clinics")
+        .select("recall_reminders_enabled, recall_reminder_days_before")
+        .eq("id", recall.clinic_id)
+        .single();
+      
+      if (clinic?.recall_reminders_enabled) {
+        // Cancel old pending reminders
+        await supabase
+          .from("notification_queue")
+          .update({ status: "cancelled", error_message: "Recall rescheduled" })
+          .eq("type", "vaccine_reminder")
+          .eq("target_id", id)
+          .eq("status", "pending");
+        
+        // Create new reminders
+        const dueDate = new Date(recall.due_date);
+        const daysBefore = clinic.recall_reminder_days_before || 7;
+        
+        // Schedule reminder X days before due date
+        const reminderDateBefore = new Date(dueDate.getTime() - daysBefore * 24 * 60 * 60 * 1000);
+        if (reminderDateBefore > new Date()) {
+          await supabase.from("notification_queue").insert({
+            clinic_id: recall.clinic_id,
+            type: "vaccine_reminder",
+            target_id: recall.id,
+            scheduled_for: reminderDateBefore.toISOString(),
+            status: "pending"
+          });
+        }
+        
+        // Schedule reminder on due date
+        if (dueDate > new Date()) {
+          await supabase.from("notification_queue").insert({
+            clinic_id: recall.clinic_id,
+            type: "vaccine_reminder",
+            target_id: recall.id,
+            scheduled_for: dueDate.toISOString(),
+            status: "pending"
+          });
+        }
+        
+        // Schedule reminder 7 days after due date
+        const overdueDate = new Date(dueDate.getTime() + 7 * 24 * 60 * 60 * 1000);
+        if (overdueDate > new Date()) {
+          await supabase.from("notification_queue").insert({
+            clinic_id: recall.clinic_id,
+            type: "vaccine_reminder",
+            target_id: recall.id,
+            scheduled_for: overdueDate.toISOString(),
+            status: "pending"
+          });
+        }
+      }
+    } catch (err) {
+      console.error("Failed to reschedule vaccine reminders:", err);
+    }
+  }
+  
+  return recall;
 }
 
 export async function deleteRecall(id: number): Promise<void> {
@@ -483,13 +624,51 @@ export async function createAppointment(
     .select()
     .single();
   if (error) throw error;
-  return data as Appointment;
+  
+  const appointment = data as Appointment;
+  
+  // Schedule appointment reminder if enabled
+  try {
+    const { data: clinic } = await supabase
+      .from("clinics")
+      .select("appointment_reminders_enabled, appointment_reminder_hours_before")
+      .eq("id", appointment.clinic_id)
+      .single();
+    
+    if (clinic?.appointment_reminders_enabled && appointment.scheduled_at) {
+      const scheduledDate = new Date(appointment.scheduled_at);
+      const reminderDate = new Date(scheduledDate.getTime() - (clinic.appointment_reminder_hours_before || 24) * 60 * 60 * 1000);
+      
+      if (reminderDate > new Date()) {
+        await supabase.from("notification_queue").insert({
+          clinic_id: appointment.clinic_id,
+          type: "appointment_reminder",
+          target_id: appointment.id,
+          scheduled_for: reminderDate.toISOString(),
+          status: "pending"
+        });
+      }
+    }
+  } catch (err) {
+    console.error("Failed to schedule appointment reminder:", err);
+  }
+  
+  return appointment;
 }
 
 export async function updateAppointment(
   id: number,
   update: Partial<Omit<Appointment, "id" | "pet_id" | "created_at">>
 ): Promise<Appointment> {
+  // Fetch existing appointment first
+  const { data: existing } = await supabase
+    .from("appointments")
+    .select("*")
+    .eq("id", id)
+    .single();
+  
+  if (!existing) throw new Error("Appointment not found");
+  
   const { data, error } = await supabase
     .from("appointments")
     .update(update)
@@ -497,7 +676,57 @@ export async function updateAppointment(
     .select()
     .single();
   if (error) throw error;
-  return data as Appointment;
+  
+  const appointment = data as Appointment;
+  
+  // Cancel existing pending reminders if appointment is cancelled or completed
+  if (update.status && (update.status === "cancelled" || update.status === "completed")) {
+    await supabase
+      .from("notification_queue")
+      .update({ status: "cancelled", error_message: "Appointment cancelled/completed" })
+      .eq("type", "appointment_reminder")
+      .eq("target_id", id)
+      .eq("status", "pending");
+  }
+  
+  // Reschedule reminder if date/time changed
+  if (update.scheduled_at && existing.scheduled_at !== update.scheduled_at) {
+    try {
+      const { data: clinic } = await supabase
+        .from("clinics")
+        .select("appointment_reminders_enabled, appointment_reminder_hours_before")
+        .eq("id", appointment.clinic_id)
+        .single();
+      
+      if (clinic?.appointment_reminders_enabled) {
+        // Cancel old pending reminders
+        await supabase
+          .from("notification_queue")
+          .update({ status: "cancelled", error_message: "Appointment rescheduled" })
+          .eq("type", "appointment_reminder")
+          .eq("target_id", id)
+          .eq("status", "pending");
+        
+        // Create new reminder
+        const scheduledDate = new Date(appointment.scheduled_at);
+        const reminderDate = new Date(scheduledDate.getTime() - (clinic.appointment_reminder_hours_before || 24) * 60 * 60 * 1000);
+        
+        if (reminderDate > new Date()) {
+          await supabase.from("notification_queue").insert({
+            clinic_id: appointment.clinic_id,
+            type: "appointment_reminder",
+            target_id: appointment.id,
+            scheduled_for: reminderDate.toISOString(),
+            status: "pending"
+          });
+        }
+      }
+    } catch (err) {
+      console.error("Failed to reschedule appointment reminder:", err);
+    }
+  }
+  
+  return appointment;
 }
 
 export async function deleteAppointment(id: number): Promise<void> {
@@ -651,6 +880,120 @@ export async function updateClinic(
 
   return data as Clinic
 }
+
+export async function getClinicExportData(clinicId: number) {
+  // Fetch clinic
+  const { data: clinic, error: clinicError } = await supabase
+    .from("clinics")
+    .select("*")
+    .eq("id", clinicId)
+    .single();
+
+  if (clinicError) throw clinicError;
+
+  // Fetch all owners for this clinic
+  const { data: owners, error: ownersError } = await supabase
+    .from("owners")
+    .select("*")
+    .eq("clinic_id", clinicId);
+
+  if (ownersError) throw ownersError;
+
+  // Fetch all pets for owners in this clinic
+  const ownerIds = (owners || []).map(o => o.id);
+  const { data: pets, error: petsError } = await supabase
+    .from("pets")
+    .select("*")
+    .in("owner_id", ownerIds);
+
+  if (petsError) throw petsError;
+
+  // Fetch all appointments for pets in this clinic
+  const petIds = (pets || []).map(p => p.id);
+  const { data: appointments, error: appointmentsError } = await supabase
+    .from("appointments")
+    .select("*")
+    .in("pet_id", petIds);
+
+  if (appointmentsError) throw appointmentsError;
+
+  // Fetch all visits for pets in this clinic
+  const { data: visits, error: visitsError } = await supabase
+    .from("visits")
+    .select("*")
+    .in("pet_id", petIds);
+
+  if (visitsError) throw visitsError;
+
+  // Fetch all recalls for pets in this clinic
+  const { data: recalls, error: recallsError } = await supabase
+    .from("recalls")
+    .select("*")
+    .in("pet_id", petIds);
+
+  if (recallsError) throw recallsError;
+
+  // Fetch all staff for this clinic
+  const { data: staff, error: staffError } = await supabase
+    .from("staff")
+    .select("*")
+    .eq("clinic_id", clinicId);
+
+  if (staffError) throw staffError;
+
+  // Build lookup maps for relationships
+  const ownerMap = new Map((owners || []).map(o => [o.id, o]));
+  const petMap = new Map((pets || []).map(p => [p.id, p]));
+
+  // Enrich data with relationship names
+  const enrichedPets = (pets || []).map(pet => ({
+    ...pet,
+    owner_name: ownerMap.get(pet.owner_id)?.name 
+      ? `${ownerMap.get(pet.owner_id)!.first_name} ${ownerMap.get(pet.owner_id)!.last_name}`
+      : undefined,
+  }));
+
+  const enrichedAppointments = (appointments || []).map(appt => {
+    const pet = petMap.get(appt.pet_id);
+    const owner = pet ? ownerMap.get(pet.owner_id) : undefined;
+    return {
+      ...appt,
+      pet_name: pet?.name,
+      owner_name: owner ? `${owner.first_name} ${owner.last_name}` : undefined,
+    };
+  });
+
+  const enrichedVisits = (visits || []).map(visit => {
+    const pet = petMap.get(visit.pet_id);
+    const owner = pet ? ownerMap.get(pet.owner_id) : undefined;
+    return {
+      ...visit,
+      pet_name: pet?.name,
+      owner_name: owner ? `${owner.first_name} ${owner.last_name}` : undefined,
+    };
+  });
+
+  const enrichedRecalls = (recalls || []).map(recall => {
+    const pet = petMap.get(recall.pet_id);
+    const owner = pet ? ownerMap.get(pet.owner_id) : undefined;
+    return {
+      ...recall,
+      pet_name: pet?.name,
+      owner_name: owner ? `${owner.first_name} ${owner.last_name}` : undefined,
+    };
+  });
+
+  return {
+    clinic: clinic as Clinic,
+    owners: owners as Owner[],
+    pets: enrichedPets,
+    appointments: enrichedAppointments,
+    visits: enrichedVisits,
+    recalls: enrichedRecalls,
+    staff: staff as Staff[],
+  };
+}
+
 export async function getClinicStaff(clinicId: number): Promise<Staff[]> {
   const { data, error } = await supabase
     .from("staff")
@@ -661,6 +1004,184 @@ export async function getClinicStaff(clinicId: number): Promise<Staff[]> {
   if (error) throw error
 
   return (data ?? []) as Staff[]
+}
+
+// ─── Email Notifications ─────────────────────────────────────────────────────
+
+export async function updateNotificationSettings(
+  clinicId: number,
+  settings: {
+    appointment_reminders_enabled?: boolean
+    recall_reminders_enabled?: boolean
+    appointment_reminder_hours_before?: number
+    recall_reminder_days_before?: number
+    email_sender_name?: string
+    reply_to_email?: string | null
+  }
+): Promise<Clinic> {
+  const { data, error } = await supabase
+    .from("clinics")
+    .update(settings)
+    .eq("id", clinicId)
+    .select()
+    .single()
+
+  if (error) throw error
+
+  return data as Clinic
+}
+
+export async function getEmailStatistics(clinicId: number): Promise<EmailStatistics> {
+  const today = new Date().toISOString().split('T')[0]
+
+  const [emailsSentRes, upcomingRes, failedRes, lastSuccessRes] = await Promise.all([
+    supabase
+      .from("sent_emails")
+      .select("id", { count: "exact", head: true })
+      .eq("clinic_id", clinicId)
+      .gte("sent_at", today),
+    supabase
+      .from("notification_queue")
+      .select("id", { count: "exact", head: true })
+      .eq("clinic_id", clinicId)
+      .eq("status", "pending")
+      .gte("scheduled_for", new Date().toISOString()),
+    supabase
+      .from("sent_emails")
+      .select("id", { count: "exact", head: true })
+      .eq("clinic_id", clinicId)
+      .eq("status", "failed"),
+    supabase
+      .from("sent_emails")
+      .select("sent_at")
+      .eq("clinic_id", clinicId)
+      .eq("status", "sent")
+      .order("sent_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+  ])
+
+  return {
+    emails_sent_today: emailsSentRes.count ?? 0,
+    upcoming_reminders: upcomingRes.count ?? 0,
+    failed_emails: failedRes.count ?? 0,
+    last_successful_email: lastSuccessRes.data?.sent_at ?? null,
+  }
+}
+
+export async function createAppointmentReminder(
+  clinicId: number,
+  appointmentId: number,
+  scheduledFor: string
+): Promise<NotificationQueue> {
+  const { data, error } = await supabase
+    .from("notification_queue")
+    .insert({
+      clinic_id: clinicId,
+      type: "appointment_reminder",
+      target_id: appointmentId,
+      scheduled_for: scheduledFor,
+      status: "pending",
+    })
+    .select()
+    .single()
+
+  if (error) throw error
+
+  return data as NotificationQueue
+}
+
+export async function createVaccineReminder(
+  clinicId: number,
+  recallId: number,
+  scheduledFor: string
+): Promise<NotificationQueue> {
+  const { data, error } = await supabase
+    .from("notification_queue")
+    .insert({
+      clinic_id: clinicId,
+      type: "vaccine_reminder",
+      target_id: recallId,
+      scheduled_for: scheduledFor,
+      status: "pending",
+    })
+    .select()
+    .single()
+
+  if (error) throw error
+
+  return data as NotificationQueue
+}
+
+export async function recordSentEmail(
+  clinicId: number,
+  notificationQueueId: number | null,
+  recipientEmail: string,
+  subject: string,
+  body: string,
+  status: 'sent' | 'failed' | 'bounced' = 'sent',
+  errorMessage: string | null = null
+): Promise<SentEmail> {
+  const { data, error } = await supabase
+    .from("sent_emails")
+    .insert({
+      clinic_id: clinicId,
+      notification_queue_id: notificationQueueId,
+      recipient_email: recipientEmail,
+      subject,
+      body,
+      status,
+      error_message: errorMessage,
+    })
+    .select()
+    .single()
+
+  if (error) throw error
+
+  return data as SentEmail
+}
+
+export async function updateNotificationStatus(
+  queueId: number,
+  status: 'sent' | 'failed' | 'cancelled',
+  errorMessage: string | null = null
+): Promise<NotificationQueue> {
+  const { data, error } = await supabase
+    .from("notification_queue")
+    .update({
+      status,
+      error_message: errorMessage,
+    })
+    .eq("id", queueId)
+    .select()
+    .single()
+
+  if (error) throw error
+
+  return data as NotificationQueue
+}
+
+export async function sendTestEmail(clinicId: number, testEmail?: string): Promise<{ success: boolean; message: string }> {
+  // Validate inputs
+  if (!clinicId) {
+    throw new Error('Clinic ID is required')
+  }
+
+  if (testEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(testEmail)) {
+    throw new Error('Invalid email address format')
+  }
+
+  const { data, error } = await supabase.functions.invoke('send-test-email', {
+    body: { clinicId, testEmail }
+  })
+
+  if (error) {
+    // Extract the actual error message from the Edge Function response
+    const errorMessage = error.message || error.context?.message || JSON.stringify(error)
+    throw new Error(errorMessage)
+  }
+
+  return data as { success: boolean; message: string }
 }
 
 export async function updateStaffMember(
