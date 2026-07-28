@@ -1033,6 +1033,7 @@ export async function updateNotificationSettings(
 
 export async function getEmailStatistics(clinicId: number): Promise<EmailStatistics> {
   const today = new Date().toISOString().split('T')[0]
+  const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
 
   const [emailsSentRes, upcomingRes, failedRes, lastSuccessRes] = await Promise.all([
     supabase
@@ -1050,7 +1051,8 @@ export async function getEmailStatistics(clinicId: number): Promise<EmailStatist
       .from("sent_emails")
       .select("id", { count: "exact", head: true })
       .eq("clinic_id", clinicId)
-      .eq("status", "failed"),
+      .eq("status", "failed")
+      .gte("sent_at", twentyFourHoursAgo),
     supabase
       .from("sent_emails")
       .select("sent_at")
