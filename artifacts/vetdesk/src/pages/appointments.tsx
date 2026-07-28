@@ -148,7 +148,7 @@ export default function AppointmentsList() {
                   <Plus className="w-4 h-4 mr-2" /> New Appointment
                 </Button>
               </DialogTrigger>
-              <DialogContent className="w-[95vw] max-w-[95vw] max-h-[90vh] overflow-y-auto overflow-x-hidden p-4 sm:max-w-lg sm:p-6">
+              <DialogContent className="w-[calc(100vw-32px)] max-w-[calc(100vw-32px)] max-h-[90vh] overflow-y-auto overflow-x-hidden p-4 sm:max-w-lg sm:p-6">
                 <DialogHeader>
                   <DialogTitle>Schedule Appointment</DialogTitle>
                 </DialogHeader>
@@ -184,13 +184,13 @@ export default function AppointmentsList() {
                       <FormField control={form.control} name="time" render={({ field }) => (
                         <FormItem>
                           <FormLabel>Time</FormLabel>
-                          <FormControl><Input type="time" {...field} /></FormControl>
+                          <FormControl><Input type="time" {...field} className="w-full" /></FormControl>
                           <FormMessage />
                         </FormItem>
                       )} />
                     </div>
                     <FormField control={form.control} name="reason" render={({ field }) => (
-                      <FormItem><FormLabel>Reason for visit</FormLabel><FormControl><Input {...field} /></FormControl><FormMessage /></FormItem>
+                      <FormItem><FormLabel>Reason for visit</FormLabel><FormControl><Input {...field} className="w-full" /></FormControl><FormMessage /></FormItem>
                     )} />
                     <DialogFooter>
                       <Button type="submit" disabled={createMutation.isPending} className="min-w-[120px]">

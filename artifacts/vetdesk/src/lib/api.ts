@@ -1169,8 +1169,15 @@ export async function sendTestEmail(clinicId: number, testEmail?: string): Promi
     throw new Error('Clinic ID is required')
   }
 
-  if (testEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(testEmail)) {
-    throw new Error('Invalid email address format')
+  // Block example/test email addresses
+  const blockedDomains = ['test@example.com', 'clinic@example.com', 'example.com', 'test.com']
+  if (testEmail) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(testEmail)) {
+      throw new Error('Invalid email address format')
+    }
+    if (blockedDomains.some(domain => testEmail.toLowerCase().includes(domain))) {
+      throw new Error('Please use a real email address, not an example address')
+    }
   }
 
   const { data, error } = await supabase.functions.invoke('send-test-email', {
@@ -1181,6 +1188,11 @@ export async function sendTestEmail(clinicId: number, testEmail?: string): Promi
     // Extract the actual error message from the Edge Function response
     const errorMessage = error.message || error.context?.message || JSON.stringify(error)
     throw new Error(errorMessage)
+  }
+
+  // Check if the Edge Function returned an error in the data
+  if (data && !data.success) {
+    throw new Error(data.error || data.message || 'Failed to send test email')
   }
 
   return data as { success: boolean; message: string }

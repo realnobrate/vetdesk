@@ -138,13 +138,22 @@ serve(async (req) => {
     const senderName = clinic.email_sender_name || 'VetDesk'
     const senderAddress = `${senderName} <onboarding@resend.dev>`
 
+    // Validate reply-to email if provided
+    let replyTo: string | undefined = undefined
+    if (clinic.reply_to_email && clinic.reply_to_email.trim()) {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+      if (emailRegex.test(clinic.reply_to_email.trim())) {
+        replyTo = clinic.reply_to_email.trim()
+      }
+    }
+
     // Send email via Resend
     const emailResult = await sendEmailViaResend({
       to: recipientEmail,
       from: senderAddress,
       subject,
       html,
-      replyTo: clinic.reply_to_email || undefined
+      replyTo
     }, resendApiKey)
 
     // Record sent email in database

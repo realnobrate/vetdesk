@@ -39,11 +39,12 @@ export default function ClinicSettings() {
   const [notificationSettings, setNotificationSettings] = useState({
     appointment_reminders_enabled: true,
     recall_reminders_enabled: true,
-    appointment_reminder_hours_before: 24,
-    recall_reminder_days_before: 7,
+    appointment_reminder_hours_before: "24",
+    recall_reminder_days_before: "7",
     email_sender_name: "VetDesk",
     reply_to_email: "",
   })
+  const [notificationErrors, setNotificationErrors] = useState<Record<string, string>>({})
 
   const [testEmail, setTestEmail] = useState("")
   const [isSendingTestEmail, setIsSendingTestEmail] = useState(false)
@@ -137,11 +138,12 @@ export default function ClinicSettings() {
     setNotificationSettings({
       appointment_reminders_enabled: clinic.appointment_reminders_enabled ?? true,
       recall_reminders_enabled: clinic.recall_reminders_enabled ?? true,
-      appointment_reminder_hours_before: clinic.appointment_reminder_hours_before ?? 24,
-      recall_reminder_days_before: clinic.recall_reminder_days_before ?? 7,
+      appointment_reminder_hours_before: String(clinic.appointment_reminder_hours_before ?? 24),
+      recall_reminder_days_before: String(clinic.recall_reminder_days_before ?? 7),
       email_sender_name: clinic.email_sender_name || "VetDesk",
       reply_to_email: clinic.reply_to_email || "",
     })
+    setNotificationErrors({})
   }, [clinic])
 
   const updateMutation = useMutation({
@@ -209,24 +211,46 @@ export default function ClinicSettings() {
 
   const notificationSettingsMutation = useMutation({
     mutationFn: async () => {
-  if (!clinic?.id) {
-    throw new Error("Clinic ID is missing")
-  }
+      if (!clinic?.id) {
+        throw new Error("Clinic ID is missing")
+      }
 
-  return updateNotificationSettings(
-    clinic.id,
-    notificationSettings
-  )
-}, onSuccess: () => {
-    queryClient.invalidateQueries({
-      queryKey: ["clinic", clinicId],
-    })
+      // Validate numeric values
+      const errors: Record<string, string> = {}
+      
+      const hoursBefore = parseInt(notificationSettings.appointment_reminder_hours_before)
+      if (isNaN(hoursBefore) || hoursBefore < 1 || hoursBefore > 168) {
+        errors.appointment_reminder_hours_before = "Must be between 1 and 168 hours"
+      }
+      
+      const daysBefore = parseInt(notificationSettings.recall_reminder_days_before)
+      if (isNaN(daysBefore) || daysBefore < 0 || daysBefore > 365) {
+        errors.recall_reminder_days_before = "Must be between 0 and 365 days"
+      }
+      
+      if (Object.keys(errors).length > 0) {
+        setNotificationErrors(errors)
+        throw new Error("Please fix the validation errors")
+      }
 
-    toast({
-      title: "Notification settings saved",
-    })
-  },
-  
+      return updateNotificationSettings(
+        clinic.id,
+        {
+          ...notificationSettings,
+          appointment_reminder_hours_before: hoursBefore,
+          recall_reminder_days_before: daysBefore,
+        }
+      )
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ["clinic", clinicId],
+      })
+      setNotificationErrors({})
+      toast({
+        title: "Notification settings saved",
+      })
+    },
     onError: (error: any) => {
       toast({
         title: "Failed to save notification settings",
@@ -551,11 +575,23 @@ export default function ClinicSettings() {
                   onChange={(e) =>
                     setNotificationSettings({
                       ...notificationSettings,
-                      appointment_reminder_hours_before: parseInt(e.target.value) || 24,
+                      appointment_reminder_hours_before: e.target.value,
                     })
                   }
+                  onBlur={() => {
+                    const val = parseInt(notificationSettings.appointment_reminder_hours_before)
+                    if (isNaN(val) || val < 1 || val > 168) {
+                      setNotificationSettings({
+                        ...notificationSettings,
+                        appointment_reminder_hours_before: "24",
+                      })
+                    }
+                  }}
                   className="w-32"
                 />
+                {notificationErrors.appointment_reminder_hours_before && (
+                  <p className="text-xs text-destructive">{notificationErrors.appointment_reminder_hours_before}</p>
+                )}
                 <p className="text-xs text-muted-foreground">
                   Send reminder this many hours before the appointment (default: 24)
                 </p>
@@ -587,17 +623,29 @@ export default function ClinicSettings() {
                 <Input
                   id="recall-days"
                   type="number"
-                  min="1"
-                  max="30"
+                  min="0"
+                  max="365"
                   value={notificationSettings.recall_reminder_days_before}
                   onChange={(e) =>
                     setNotificationSettings({
                       ...notificationSettings,
-                      recall_reminder_days_before: parseInt(e.target.value) || 7,
+                      recall_reminder_days_before: e.target.value,
                     })
                   }
+                  onBlur={() => {
+                    const val = parseInt(notificationSettings.recall_reminder_days_before)
+                    if (isNaN(val) || val < 0 || val > 365) {
+                      setNotificationSettings({
+                        ...notificationSettings,
+                        recall_reminder_days_before: "7",
+                      })
+                    }
+                  }}
                   className="w-32"
                 />
+                {notificationErrors.recall_reminder_days_before && (
+                  <p className="text-xs text-destructive">{notificationErrors.recall_reminder_days_before}</p>
+                )}
                 <p className="text-xs text-muted-foreground">
                   Send reminder this many days before due date (default: 7)
                 </p>
