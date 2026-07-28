@@ -181,13 +181,67 @@ export default function AppointmentsList() {
                           <FormMessage />
                         </FormItem>
                       )} />
-                      <FormField control={form.control} name="time" render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Time</FormLabel>
-                          <FormControl><Input type="time" {...field} className="w-full" /></FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )} />
+                      <FormField
+  control={form.control}
+  name="time"
+  render={({ field }) => {
+    const [selectedHour = "09", selectedMinute = "00"] = String(
+      field.value || "09:00",
+    ).split(":");
+
+    const updateTime = (hour: string, minute: string) => {
+      field.onChange(`${hour}:${minute}`);
+    };
+
+    return (
+      <FormItem>
+        <FormLabel>Time</FormLabel>
+
+        <div className="grid grid-cols-2 gap-3">
+          <select
+            ref={field.ref}
+            name={field.name}
+            value={selectedHour}
+            onBlur={field.onBlur}
+            onChange={(event) =>
+              updateTime(event.target.value, selectedMinute)
+            }
+            aria-label="Appointment hour"
+            className="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm"
+          >
+            {Array.from({ length: 24 }, (_, index) =>
+              String(index).padStart(2, "0"),
+            ).map((hour) => (
+              <option key={hour} value={hour}>
+                {hour} h
+              </option>
+            ))}
+          </select>
+
+          <select
+            value={selectedMinute}
+            onBlur={field.onBlur}
+            onChange={(event) =>
+              updateTime(selectedHour, event.target.value)
+            }
+            aria-label="Appointment minute"
+            className="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm"
+          >
+            {Array.from({ length: 60 }, (_, index) =>
+              String(index).padStart(2, "0"),
+            ).map((minute) => (
+              <option key={minute} value={minute}>
+                {minute} min
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <FormMessage />
+      </FormItem>
+    );
+  }}
+/>
                     </div>
                     <FormField control={form.control} name="reason" render={({ field }) => (
                       <FormItem><FormLabel>Reason for visit</FormLabel><FormControl><Input {...field} className="w-full" /></FormControl><FormMessage /></FormItem>
