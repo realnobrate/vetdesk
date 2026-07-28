@@ -710,13 +710,21 @@ export default function ClinicSettings() {
             <div className="pt-4 border-t space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="test-email">Send Test Email</Label>
-                <div className="flex gap-2">
+                <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+  <p className="font-medium">Demo email mode</p>
+  <p className="mt-1">
+    Email delivery is currently limited to the email address connected to the
+    Resend account. Sending notifications to clinic clients will be enabled
+    after an email domain is activated.
+  </p>
+</div>
+                <div className="flex flex-col gap-2 sm:flex-row">
                   <Input
                     id="test-email"
                     type="email"
                     value={testEmail}
                     onChange={(e) => setTestEmail(e.target.value)}
-                    placeholder="test@example.com (optional, uses clinic email if empty)"
+                    placeholder="Email connected to the Resend account"
                     className="flex-1"
                     disabled={sendTestEmailMutation.isPending}
                   />
