@@ -167,15 +167,18 @@ async function processAppointmentReminder(
   }
 
   // Generate email content
+  // Format date and time using Europe/Belgrade timezone to ensure correct display
   const appointmentDate = new Date(appointment.scheduled_at).toLocaleDateString('en-US', {
     weekday: 'long',
     year: 'numeric',
     month: 'long',
-    day: 'numeric'
+    day: 'numeric',
+    timeZone: 'Europe/Belgrade'
   })
   const appointmentTime = new Date(appointment.scheduled_at).toLocaleTimeString('en-US', {
     hour: 'numeric',
-    minute: '2-digit'
+    minute: '2-digit',
+    timeZone: 'Europe/Belgrade'
   })
 
   const html = `
@@ -217,6 +220,8 @@ async function processAppointmentReminder(
 
   const subject = `Appointment Reminder: ${pet.name} at ${clinic.name}`
 
+  console.log(`Sending appointment reminder email to: ${owner.email}`)
+
   // Send email via Resend
   const emailResult = await sendEmailViaResend({
     to: owner.email,
@@ -225,6 +230,8 @@ async function processAppointmentReminder(
     html,
     replyTo: clinic.reply_to_email || undefined
   }, resendApiKey)
+
+  console.log(`Appointment reminder email result:`, { success: emailResult.success, error: emailResult.error })
 
   // Record sent email in database
   await supabase.from('sent_emails').insert({
@@ -356,11 +363,13 @@ async function processVaccineReminder(
   }
 
   // Generate email content
+  // Format date using Europe/Belgrade timezone to ensure correct display
   const dueDate = new Date(recall.due_date).toLocaleDateString('en-US', {
     weekday: 'long',
     year: 'numeric',
     month: 'long',
-    day: 'numeric'
+    day: 'numeric',
+    timeZone: 'Europe/Belgrade'
   })
 
   const html = `
@@ -401,6 +410,8 @@ async function processVaccineReminder(
 
   const subject = `Vaccination Reminder: ${recall.recall_type} for ${pet.name}`
 
+  console.log(`Sending vaccination reminder email to: ${owner.email}`)
+
   // Send email via Resend
   const emailResult = await sendEmailViaResend({
     to: owner.email,
@@ -409,6 +420,8 @@ async function processVaccineReminder(
     html,
     replyTo: clinic.reply_to_email || undefined
   }, resendApiKey)
+
+  console.log(`Vaccination reminder email result:`, { success: emailResult.success, error: emailResult.error })
 
   // Record sent email in database
   await supabase.from('sent_emails').insert({
@@ -442,6 +455,8 @@ async function sendEmailViaResend(
   apiKey: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
+    console.log(`Resend API request:`, { to: email.to, from: email.from, subject: email.subject })
+    
     const response = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: {
@@ -458,14 +473,18 @@ async function sendEmailViaResend(
     })
 
     const data = await response.json()
+    console.log(`Resend API response:`, { status: response.status, ok: response.ok, data })
 
     if (!response.ok) {
-      return { success: false, error: data.message || 'Failed to send email' }
+      const errorMessage = data.message || data.error || JSON.stringify(data)
+      console.error('Resend API error:', { status: response.status, errorMessage })
+      return { success: false, error: errorMessage }
     }
 
+    console.log('Resend API: Email sent successfully')
     return { success: true }
   } catch (error) {
-    console.error('Resend API error:', error)
+    console.error('Resend API network error:', error)
     return { 
       success: false, 
       error: error instanceof Error ? error.message : 'Unknown error' 

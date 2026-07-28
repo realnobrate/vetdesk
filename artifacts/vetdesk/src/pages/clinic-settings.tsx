@@ -208,16 +208,25 @@ export default function ClinicSettings() {
   }
 
   const notificationSettingsMutation = useMutation({
-    mutationFn: () =>
-      updateNotificationSettings(clinicId, notificationSettings),
-    onSuccess: () => {
-      queryClient.invalidateQueries({
-        queryKey: ["clinic", clinicId],
-      })
-      toast({
-        title: "Notification settings saved",
-      })
-    },
+    mutationFn: async () => {
+  if (!clinic?.id) {
+    throw new Error("Clinic ID is missing")
+  }
+
+  return updateNotificationSettings(
+    clinic.id,
+    notificationSettings
+  )
+}, onSuccess: () => {
+    queryClient.invalidateQueries({
+      queryKey: ["clinic", clinicId],
+    })
+
+    toast({
+      title: "Notification settings saved",
+    })
+  },
+  
     onError: (error: any) => {
       toast({
         title: "Failed to save notification settings",
