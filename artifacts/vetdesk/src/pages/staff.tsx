@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Plus, Search, ShieldCheck, Stethoscope, UserRound } from "lucide-react"
+import { Plus, Search, ShieldCheck, Stethoscope, UserRound, X } from "lucide-react"
 
 import { 
   addStaffMember,
@@ -41,11 +41,12 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
-
+import { useLocation } from "wouter"
 export default function StaffPage() {
   const { staff } = useAuth()
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const [, setLocation] = useLocation()
 
   const [search, setSearch] = useState("")
 
@@ -211,15 +212,16 @@ const addMutation = useMutation({
     </p>
   </div>
 
+<div className="flex items-center gap-2">
   <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
     <DialogTrigger asChild>
       <Button>
         <Plus className="mr-2 h-4 w-4" />
         Add Staff Member
-      </Button>
+        </Button>
     </DialogTrigger>
 
-    <DialogContent className="sm:max-w-md">
+    <DialogContent className="relative sm:max-w-md">
       <form onSubmit={handleAddStaff}>
         <DialogHeader>
           <DialogTitle>Add Staff Member</DialogTitle>
@@ -299,6 +301,17 @@ const addMutation = useMutation({
       </form>
     </DialogContent>
   </Dialog>
+  <Button
+  type="button"
+  variant="ghost"
+  size="icon"
+  onClick={() => setLocation("/dashboard")}
+  aria-label="Close Staff Management"
+  className="shrink-0"
+>
+  <X className="h-5 w-5" />
+</Button>
+</div>
 </div>
 
       <Card>
