@@ -1,0 +1,10 @@
+.env
+.env.*
+!.env.example
+node_modules/
+dist/
+supabase/.temp/
+.replit-artifact/
+*.tsbuildinfo
+.DS_Store
+*.log

@@ -19,6 +19,7 @@ import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { useAuth } from "@/lib/auth"
 
 const petSchema = z.object({
   name: z.string().trim().min(1, "Name is required"),
@@ -43,6 +44,7 @@ export default function OwnerDetail() {
   const ownerId = Number(id)
   const [, setLocation] = useLocation()
   const { toast } = useToast()
+  const { staff } = useAuth()
   const queryClient = useQueryClient()
 
   const { data: owner, isLoading } = useQuery({
@@ -64,7 +66,7 @@ export default function OwnerDetail() {
   const deleteMutation = useMutation({
     mutationFn: () => deleteOwner(ownerId),
     onSuccess: () => {
-      toast({ title: "Owner deleted" })
+      toast({ title: "Owner archived" })
       queryClient.invalidateQueries({ queryKey: ["owners"] })
       setLocation("/owners")
     },
@@ -97,7 +99,7 @@ export default function OwnerDetail() {
   
     onSuccess: () => {
       toast({
-        title: "Pet deleted successfully",
+        title: "Pet archived successfully",
       })
   
       queryClient.invalidateQueries({
@@ -167,7 +169,7 @@ export default function OwnerDetail() {
               </div>
             </div>
             <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
-              <Dialog open={deleteModalOpen} onOpenChange={setDeleteModalOpen}>
+              {staff?.role === "admin" ? <Dialog open={deleteModalOpen} onOpenChange={setDeleteModalOpen}>
                 <DialogTrigger asChild>
                   <Button variant="outline" className="w-full sm:w-auto text-destructive border-destructive/20 hover:bg-destructive/10">Delete</Button>
                 </DialogTrigger>
@@ -175,18 +177,18 @@ export default function OwnerDetail() {
                   <DialogHeader>
                     <DialogTitle>Delete Owner</DialogTitle>
                     <DialogDescription>
-                      Are you sure you want to delete {owner.first_name} {owner.last_name}? This cannot be undone.
+                      Archive {owner.first_name} {owner.last_name} and all linked pets? Medical history is retained for audit and can be restored by an administrator.
                     </DialogDescription>
                   </DialogHeader>
                   <DialogFooter>
                     <Button variant="outline" onClick={() => setDeleteModalOpen(false)}>Cancel</Button>
                     <Button variant="destructive" onClick={() => deleteMutation.mutate()} disabled={deleteMutation.isPending}>
                       {deleteMutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                      Delete Forever
+                      Archive client
                     </Button>
                   </DialogFooter>
                 </DialogContent>
-              </Dialog>
+              </Dialog> : null}
               <Button onClick={() => setIsEditing(!isEditing)} variant={isEditing ? "outline" : "default"} className="w-full sm:w-auto">
                 {isEditing ? "Cancel Edit" : "Edit Details"}
               </Button>
@@ -379,23 +381,23 @@ export default function OwnerDetail() {
                           <Button variant="outline" className="w-full sm:w-auto">View</Button>
                         </Link>
 
-                        <Dialog open={petDeleteTarget?.id === pet.id} onOpenChange={(open) => setPetDeleteTarget(open ? { id: pet.id, name: pet.name } : null)}>
+                        {staff?.role === "admin" ? <Dialog open={petDeleteTarget?.id === pet.id} onOpenChange={(open) => setPetDeleteTarget(open ? { id: pet.id, name: pet.name } : null)}>
                           <DialogTrigger asChild>
                             <Button type="button" variant="destructive" size="sm" className="w-full sm:w-auto" disabled={deletePetMutation.isPending}>
-                              {deletePetMutation.isPending ? "Deleting..." : "Delete"}
+                              {deletePetMutation.isPending ? "Archiving..." : "Archive"}
                             </Button>
                           </DialogTrigger>
                           <DialogContent>
                             <DialogHeader>
-                              <DialogTitle>Delete pet?</DialogTitle>
-                              <DialogDescription>Are you sure you want to delete {pet.name}? This action cannot be undone.</DialogDescription>
+                              <DialogTitle>Archive pet?</DialogTitle>
+                              <DialogDescription>Archive {pet.name}? Medical history remains retained and auditable.</DialogDescription>
                             </DialogHeader>
                             <DialogFooter>
                               <Button variant="outline" onClick={() => setPetDeleteTarget(null)}>Cancel</Button>
-                              <Button variant="destructive" onClick={() => { deletePetMutation.mutate(pet.id); setPetDeleteTarget(null) }}>Confirm Delete</Button>
+                              <Button variant="destructive" onClick={() => { deletePetMutation.mutate(pet.id); setPetDeleteTarget(null) }}>Archive pet</Button>
                             </DialogFooter>
                           </DialogContent>
-                        </Dialog>
+                        </Dialog> : null}
                       </div>
                     </div>
                   ))

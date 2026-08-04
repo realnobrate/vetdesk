@@ -4,8 +4,6 @@ import tailwindcss from '@tailwindcss/vite';
 import { defineConfig } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
-import runtimeErrorOverlay from '@replit/vite-plugin-runtime-error-modal';
-
 const port = Number(process.env.PORT) || 22681;
 const basePath = process.env.BASE_PATH || '/';
 
@@ -17,22 +15,27 @@ export default defineConfig({
 
     tailwindcss({ optimize: false }),
 
-    runtimeErrorOverlay(),
-
     VitePWA({
       registerType: 'autoUpdate',
 
-      includeAssets: ['favicon.ico', 'pwa-192x192.png', 'pwa-512x512.png'],
+      includeAssets: ['favicon.svg', 'logo.svg', 'pwa-192x192.png', 'pwa-512x512.png'],
+
+      workbox: {
+        cleanupOutdatedCaches: true,
+        navigateFallback: '/index.html',
+        navigateFallbackDenylist: [/^\/functions\//],
+      },
 
       manifest: {
         name: 'VetDesk',
         short_name: 'VetDesk',
+        id: '/',
 
         description:
           'Veterinary clinic management application for pets, owners, appointments and recalls.',
 
-        theme_color: '#ffffff',
-        background_color: '#ffffff',
+        theme_color: '#0d4f6c',
+        background_color: '#faf9f6',
 
         display: 'standalone',
 
@@ -60,32 +63,11 @@ export default defineConfig({
       },
     }),
 
-    ...(process.env.NODE_ENV !== 'production' &&
-    process.env.REPL_ID !== undefined
-      ? [
-          await import('@replit/vite-plugin-cartographer').then((m) =>
-            m.cartographer({
-              root: path.resolve(import.meta.dirname, '..'),
-            }),
-          ),
-
-          await import('@replit/vite-plugin-dev-banner').then((m) =>
-            m.devBanner(),
-          ),
-        ]
-      : []),
   ],
 
   resolve: {
     alias: {
       '@': path.resolve(import.meta.dirname, 'src'),
-
-      '@assets': path.resolve(
-        import.meta.dirname,
-        '..',
-        '..',
-        'attached_assets',
-      ),
     },
 
     dedupe: ['react', 'react-dom'],
@@ -96,6 +78,16 @@ export default defineConfig({
   build: {
     outDir: path.resolve(import.meta.dirname, 'dist/public'),
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'vendor-react': ['react', 'react-dom', 'wouter'],
+          'vendor-query': ['@tanstack/react-query'],
+          'vendor-supabase': ['@supabase/supabase-js'],
+          'vendor-icons': ['lucide-react'],
+        },
+      },
+    },
   },
 
   server: {

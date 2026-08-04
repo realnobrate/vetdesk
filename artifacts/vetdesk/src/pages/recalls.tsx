@@ -33,14 +33,26 @@ export default function RecallsList() {
     mutationFn: ({ id, status }: { id: number; status: "sent" | "completed" }) =>
       updateRecall(id, { status }),
     onSuccess: (_, { status }) => {
-      toast({ title: `Recall marked as ${status}` })
+      toast({
+        title:
+          status === "sent"
+            ? "Recall manually marked as sent"
+            : "Recall completed",
+      })
       queryClient.invalidateQueries({ queryKey: ["recalls"] })
+    },
+    onError: (error: unknown) => {
+      toast({
+        title: "Could not update recall",
+        description: error instanceof Error ? error.message : "Please try again.",
+        variant: "destructive",
+      })
     },
   })
 
   return (
     <Shell>
-      <div className="p-8 max-w-7xl mx-auto space-y-8">
+      <div className="p-4 sm:p-8 max-w-7xl mx-auto space-y-6 sm:space-y-8">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           <div>
             <h1 className="text-3xl font-bold tracking-tight">Recalls</h1>
@@ -130,7 +142,7 @@ export default function RecallsList() {
                               <Button variant="outline" size="sm"
                                 onClick={() => updateMutation.mutate({ id: recall.id, status: "sent" })}
                                 className="h-8">
-                                <Mail className="w-3.5 h-3.5 mr-1" /> Send
+                                <Mail className="w-3.5 h-3.5 mr-1" /> Mark Sent
                               </Button>
                             )}
                             <Button size="sm"

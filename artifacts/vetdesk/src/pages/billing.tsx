@@ -6,17 +6,41 @@ import {
 import { useLocation } from "wouter";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth";
+import { Button } from "@/components/ui/button";
 
 const paypalClientId = import.meta.env.VITE_PAYPAL_CLIENT_ID;
 const paypalPlanId = import.meta.env.VITE_PAYPAL_PLAN_ID;
 
 export default function BillingPage() {
   const [, setLocation] = useLocation();
-  const { refreshSubscription } = useAuth();
+  const {
+    refreshSubscription,
+    hasActiveSubscription,
+    subscriptionStatus,
+  } = useAuth();
 
   const [subscriptionId, setSubscriptionId] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+
+  if (hasActiveSubscription) {
+    return (
+      <main className="flex min-h-[100dvh] items-center justify-center bg-background p-4">
+        <section className="w-full max-w-xl rounded-3xl border bg-card p-6 text-center shadow-sm sm:p-8">
+          <img src="/logo.svg" alt="VetDesk" className="mx-auto h-12 w-12" />
+          <h1 className="mt-4 text-2xl font-bold">VetDesk Pro is active</h1>
+          <p className="mt-2 text-sm text-muted-foreground">
+            This clinic has an active subscription. Billing changes and
+            cancellation are managed through the PayPal account used at
+            checkout.
+          </p>
+          <Button className="mt-5" onClick={() => setLocation("/dashboard")}>
+            Return to dashboard
+          </Button>
+        </section>
+      </main>
+    );
+  }
 
   if (!paypalClientId || !paypalPlanId) {
     return (
@@ -53,6 +77,11 @@ export default function BillingPage() {
             <p className="mt-2 text-muted-foreground">
               Manage your VetDesk subscription.
             </p>
+            {subscriptionStatus ? (
+              <p className="mt-2 text-sm text-muted-foreground">
+                Current status: {subscriptionStatus.replace("_", " ")}
+              </p>
+            ) : null}
           </div>
 
           <div className="rounded-3xl border bg-card p-6 shadow-sm sm:p-8">
@@ -151,6 +180,12 @@ export default function BillingPage() {
                           setLocation("/dashboard");
                         }, 800);
                       }}
+                      onError={() => {
+                        setIsProcessing(false);
+                        setErrorMessage(
+                          "PayPal checkout could not be completed. No VetDesk subscription was activated.",
+                        );
+                      }}
                     />
                   </>
                 ) : (
@@ -183,7 +218,7 @@ export default function BillingPage() {
                 <p className="mt-4 text-center text-xs text-muted-foreground">
                   Start with a 14-day free trial.
                   Then 19€/month.
-                  Cancel anytime.
+                  Cancel anytime through PayPal.
                 </p>
               </div>
             </div>

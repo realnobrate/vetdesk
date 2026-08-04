@@ -1,21 +1,14 @@
-import readline from "node:readline/promises";
-import { stdin as input, stdout as output } from "node:process";
-
-const rl = readline.createInterface({ input, output });
-
 async function main() {
-  const clientId = (
-    await rl.question("Unesi PayPal LIVE Client ID: ")
-  ).trim();
-
-  const clientSecret = (
-    await rl.question("Unesi PayPal LIVE Secret: ")
-  ).trim();
-
-  rl.close();
+  const clientId = process.env.PAYPAL_CLIENT_ID?.trim();
+  const clientSecret = process.env.PAYPAL_SECRET?.trim();
+  const paypalBaseUrl = (
+    process.env.PAYPAL_BASE_URL || "https://api-m.paypal.com"
+  ).replace(/\/$/, "");
 
   if (!clientId || !clientSecret) {
-    throw new Error("Client ID i Secret su obavezni.");
+    throw new Error(
+      "Set PAYPAL_CLIENT_ID and PAYPAL_SECRET environment variables before running this one-time script.",
+    );
   }
 
   const auth = Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
@@ -23,7 +16,7 @@ async function main() {
   console.log("\nDobijanje PayPal access tokena...");
 
   const tokenResponse = await fetch(
-    "https://api-m.paypal.com/v1/oauth2/token",
+    `${paypalBaseUrl}/v1/oauth2/token`,
     {
       method: "POST",
       headers: {
@@ -46,7 +39,7 @@ async function main() {
   console.log("Kreiranje VetDesk proizvoda...");
 
   const productResponse = await fetch(
-    "https://api-m.paypal.com/v1/catalogs/products",
+    `${paypalBaseUrl}/v1/catalogs/products`,
     {
       method: "POST",
       headers: {
@@ -75,7 +68,7 @@ async function main() {
   console.log("Kreiranje plana sa 14 dana besplatno...");
 
   const planResponse = await fetch(
-    "https://api-m.paypal.com/v1/billing/plans",
+    `${paypalBaseUrl}/v1/billing/plans`,
     {
       method: "POST",
       headers: {

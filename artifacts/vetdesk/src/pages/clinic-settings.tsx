@@ -34,6 +34,7 @@ export default function ClinicSettings() {
     address: "",
     website: "",
     working_hours: "",
+    timezone: "Europe/Belgrade",
   })
 
   const [notificationSettings, setNotificationSettings] = useState({
@@ -47,8 +48,6 @@ export default function ClinicSettings() {
   const [notificationErrors, setNotificationErrors] = useState<Record<string, string>>({})
 
   const [testEmail, setTestEmail] = useState("")
-  const [isSendingTestEmail, setIsSendingTestEmail] = useState(false)
-
   const [isUploadingLogo, setIsUploadingLogo] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
   const [exportFormat, setExportFormat] = useState<"csv" | "excel" | null>(null)
@@ -60,10 +59,16 @@ export default function ClinicSettings() {
 
   if (!file) return
 
-  if (!file.type.startsWith("image/")) {
+  const allowedImageTypes: Record<string, string> = {
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/webp": "webp",
+  }
+
+  if (!allowedImageTypes[file.type]) {
     toast({
       title: "Invalid file",
-      description: "Please select an image.",
+      description: "Please select a JPG, PNG, or WEBP image.",
       variant: "destructive",
     })
     return
@@ -81,8 +86,7 @@ export default function ClinicSettings() {
   try {
     setIsUploadingLogo(true)
 
-    const extension =
-      file.name.split(".").pop()?.toLowerCase() || "png"
+    const extension = allowedImageTypes[file.type]
 
     const filePath = `clinics/${clinicId}/logo-${Date.now()}.${extension}`
 
@@ -133,6 +137,7 @@ export default function ClinicSettings() {
       address: clinic.address || "",
       website: clinic.website || "",
       working_hours: clinic.working_hours || "",
+      timezone: clinic.timezone || "Europe/Belgrade",
     })
 
     setNotificationSettings({
@@ -147,15 +152,39 @@ export default function ClinicSettings() {
   }, [clinic])
 
   const updateMutation = useMutation({
-    mutationFn: () =>
-      updateClinic(clinicId, {
+    mutationFn: () => {
+      if (!formData.name.trim()) {
+        throw new Error("Clinic name is required.")
+      }
+      if (
+        formData.email.trim() &&
+        !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email.trim())
+      ) {
+        throw new Error("Enter a valid clinic email address.")
+      }
+      if (formData.website.trim()) {
+        try {
+          new URL(formData.website.trim())
+        } catch {
+          throw new Error("Website must be a complete URL, including https://.")
+        }
+      }
+      try {
+        new Intl.DateTimeFormat("en", { timeZone: formData.timezone.trim() })
+      } catch {
+        throw new Error("Enter a valid IANA time zone, such as Europe/Belgrade.")
+      }
+
+      return updateClinic(clinicId, {
         name: formData.name.trim(),
         phone: formData.phone.trim() || null,
         email: formData.email.trim() || null,
         address: formData.address.trim() || null,
         website: formData.website.trim() || null,
         working_hours: formData.working_hours.trim() || null,
-      }),
+        timezone: formData.timezone.trim(),
+      })
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({
         queryKey: ["clinic", clinicId],
@@ -188,7 +217,7 @@ export default function ClinicSettings() {
         blob = await exportToCSV(exportData)
         filename = generateBackupFilename("zip")
       } else {
-        blob = exportToExcel(exportData)
+        blob = await exportToExcel(exportData)
         filename = generateBackupFilename("xlsx")
       }
 
@@ -354,7 +383,7 @@ export default function ClinicSettings() {
     <input
       id="clinic-logo"
       type="file"
-      accept="image/*"
+      accept="image/jpeg,image/png,image/webp"
       className="hidden"
       disabled={isUploadingLogo}
       onChange={handleLogoUpload}
@@ -453,6 +482,22 @@ export default function ClinicSettings() {
                 placeholder="Monday-Friday: 08:00-18:00"
                 className="min-h-28"
               />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="clinic-timezone">Time Zone</Label>
+              <Input
+                id="clinic-timezone"
+                value={formData.timezone}
+                onChange={(event) =>
+                  setFormData({ ...formData, timezone: event.target.value })
+                }
+                placeholder="Europe/Belgrade"
+                autoComplete="off"
+              />
+              <p className="text-xs text-muted-foreground">
+                Used to format appointment and reminder times in emails.
+              </p>
             </div>
 
             <div className="flex justify-end">

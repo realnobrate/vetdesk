@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Plus, Search, ShieldCheck, Stethoscope, UserRound, X } from "lucide-react"
+import { Plus, Search, ShieldCheck, Stethoscope, UserRound } from "lucide-react"
 
 import { 
   addStaffMember,
@@ -8,7 +8,8 @@ import {
   updateStaffMember,
 } from "@/lib/api"
 import { useAuth } from "@/lib/auth"
-import type { Staff } from "@/lib/types"
+import type { Staff, StaffRole } from "@/lib/types"
+import { Shell } from "@/components/layout/Shell"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -41,19 +42,17 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
-import { useLocation } from "wouter"
 export default function StaffPage() {
   const { staff } = useAuth()
   const queryClient = useQueryClient()
   const { toast } = useToast()
-  const [, setLocation] = useLocation()
 
   const [search, setSearch] = useState("")
 
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false)
 const [newStaffName, setNewStaffName] = useState("")
 const [newStaffEmail, setNewStaffEmail] = useState("")
-const [newStaffRole, setNewStaffRole] = useState("veterinarian")
+const [newStaffRole, setNewStaffRole] = useState<StaffRole>("veterinarian")
 
   const clinicId = staff?.clinic_id
 
@@ -70,7 +69,7 @@ const [newStaffRole, setNewStaffRole] = useState("veterinarian")
   }: {
     staffId: number
     updates: {
-      role?: string
+      role?: StaffRole
       status?: "active" | "inactive"
     }
   }) => updateStaffMember(staffId, updates),
@@ -86,12 +85,8 @@ const [newStaffRole, setNewStaffRole] = useState("veterinarian")
     })
   },
 
-  onError: (error: any) => {
-    const message =
-      error?.message ||
-      error?.details ||
-      error?.hint ||
-      "Unknown error occurred"
+  onError: (error: unknown) => {
+    const message = error instanceof Error ? error.message : "Unknown error occurred"
 
     toast({
       title: "Could not update staff member",
@@ -131,15 +126,7 @@ const addMutation = useMutation({
   },
 
   onError: (error: any) => {
-    console.error("ADD STAFF ERROR:", error)
-
-    const message =
-      error?.message ||
-      error?.details ||
-      error?.hint ||
-      "Unknown error occurred"
-
-    alert(`Add staff failed: ${message}`)
+    const message = error instanceof Error ? error.message : "Unknown error occurred"
 
     toast({
       title: "Could not add staff member",
@@ -148,9 +135,21 @@ const addMutation = useMutation({
     })
   },
 })
-   const handleAddStaff = () => {
-  addMutation.mutate()
-}
+  const handleAddStaff = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+
+    if (!newStaffName.trim()) {
+      toast({ title: "Full name is required", variant: "destructive" })
+      return
+    }
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newStaffEmail.trim())) {
+      toast({ title: "Enter a valid email address", variant: "destructive" })
+      return
+    }
+
+    addMutation.mutate()
+  }
 
   const filteredStaff = useMemo(() => {
     const normalizedSearch = search.trim().toLowerCase()
@@ -168,7 +167,7 @@ const addMutation = useMutation({
     })
   }, [search, staffMembers])
 
-  function getRoleIcon(role: string) {
+  function getRoleIcon(role: StaffRole) {
     if (role === "admin") {
       return <ShieldCheck className="h-4 w-4" />
     }
@@ -178,13 +177,6 @@ const addMutation = useMutation({
     }
 
     return <UserRound className="h-4 w-4" />
-  }
-
-  function formatRole(role: string) {
-    return role
-      .split("_")
-      .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-      .join(" ")
   }
 
   if (!clinicId) {
@@ -200,7 +192,8 @@ const addMutation = useMutation({
   }
 
   return (
-    <div className="space-y-6 p-6">
+    <Shell>
+    <div className="mx-auto max-w-7xl space-y-6 p-4 sm:p-6 lg:p-8">
     <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
   <div>
     <h1 className="text-3xl font-bold tracking-tight">
@@ -263,7 +256,7 @@ const addMutation = useMutation({
 
             <Select
               value={newStaffRole}
-              onValueChange={setNewStaffRole}
+              onValueChange={(role) => setNewStaffRole(role as StaffRole)}
             >
               <SelectTrigger>
                 <SelectValue placeholder="Select a role" />
@@ -294,23 +287,20 @@ const addMutation = useMutation({
             Cancel
           </Button>
 
-          <Button type="submit" disabled={addMutation.isPending}>
+          <Button
+            type="submit"
+            disabled={
+              addMutation.isPending ||
+              !newStaffName.trim() ||
+              !newStaffEmail.trim()
+            }
+          >
             {addMutation.isPending ? "Adding..." : "Add Staff"}
           </Button>
         </DialogFooter>
       </form>
     </DialogContent>
   </Dialog>
-  <Button
-  type="button"
-  variant="ghost"
-  size="icon"
-  onClick={() => setLocation("/dashboard")}
-  aria-label="Close Staff Management"
-  className="shrink-0"
->
-  <X className="h-5 w-5" />
-</Button>
 </div>
 </div>
 
@@ -384,7 +374,7 @@ const addMutation = useMutation({
                             onValueChange={(role) =>
                               updateMutation.mutate({
                                 staffId: member.id,
-                                updates: { role },
+                                updates: { role: role as StaffRole },
                               })
                             }
                           >
@@ -414,7 +404,9 @@ const addMutation = useMutation({
                           >
                             {member.status === "active"
                               ? "Active"
-                              : "Inactive"}
+                              : member.status === "pending"
+                                ? "Pending"
+                                : "Inactive"}
                           </Badge>
                         </TableCell>
 
@@ -455,5 +447,6 @@ const addMutation = useMutation({
         </CardContent>
       </Card>
     </div>
+    </Shell>
   )
 }

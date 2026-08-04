@@ -1,0 +1,11 @@
+[functions.process-reminders]
+verify_jwt = false
+
+[functions.send-test-email]
+verify_jwt = true
+
+[functions.paypal-register-subscription]
+verify_jwt = true
+
+[functions.paypal-webhook]
+verify_jwt = false

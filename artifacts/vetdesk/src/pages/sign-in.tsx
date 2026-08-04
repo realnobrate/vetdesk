@@ -19,7 +19,7 @@ export default function SignInPage() {
     e.preventDefault();
     setLoading(true);
     setError(null);
-    const { error } = await signIn(email, password);
+    const { error } = await signIn(email.trim().toLowerCase(), password);
     setLoading(false);
     if (error) {
       setError(error);

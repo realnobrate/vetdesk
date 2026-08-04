@@ -12,25 +12,57 @@ export default function SignUpPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [confirmationSent, setConfirmationSent] = useState(false);
   const [loading, setLoading] = useState(false);
   const { signUp } = useAuth();
   const [, setLocation] = useLocation();
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (password.length < 6) {
-      setError("Password must be at least 6 characters.");
+    if (!name.trim()) {
+      setError("Full name is required.");
+      return;
+    }
+    if (password.length < 8) {
+      setError("Password must be at least 8 characters.");
       return;
     }
     setLoading(true);
     setError(null);
-    const { error } = await signUp(email, password, name);
+    const { error, requiresEmailConfirmation } = await signUp(
+      email.trim().toLowerCase(),
+      password,
+      name.trim(),
+    );
     setLoading(false);
     if (error) {
       setError(error);
+    } else if (requiresEmailConfirmation) {
+      setConfirmationSent(true);
     } else {
       setLocation("/dashboard");
     }
+  }
+
+  if (confirmationSent) {
+    return (
+      <div className="flex min-h-[100dvh] items-center justify-center bg-background px-4 py-8">
+        <Card className="w-full max-w-[460px] border-border/70 text-center shadow-sm">
+          <CardHeader>
+            <img src="/logo.svg" alt="VetDesk" className="mx-auto h-12 w-12" />
+            <CardTitle className="mt-3">Check your email</CardTitle>
+            <CardDescription>
+              We sent an account confirmation link to {email.trim()}.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button className="w-full" onClick={() => setLocation("/sign-in")}>
+              Continue to sign in
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
   }
 
   return (
@@ -79,7 +111,7 @@ export default function SignUpPage() {
                 <Input
                   id="password"
                   type="password"
-                  placeholder="Min. 6 characters"
+                  placeholder="Min. 8 characters"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required

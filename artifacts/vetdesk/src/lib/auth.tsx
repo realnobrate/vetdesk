@@ -30,7 +30,10 @@ interface AuthContextValue {
   hasActiveSubscription: boolean;
   loading: boolean;
   subscriptionLoading: boolean;
+  accountError: string | null;
+  subscriptionError: string | null;
   refreshSubscription: () => Promise<void>;
+  reloadAccount: () => Promise<void>;
   signIn: (
     email: string,
     password: string,
@@ -39,7 +42,10 @@ interface AuthContextValue {
     email: string,
     password: string,
     name: string,
-  ) => Promise<{ error: string | null }>;
+  ) => Promise<{
+    error: string | null;
+    requiresEmailConfirmation: boolean;
+  }>;
   signOut: () => Promise<void>;
 }
 
@@ -53,15 +59,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     useState<SubscriptionStatus>(null);
   const [loading, setLoading] = useState(true);
   const [subscriptionLoading, setSubscriptionLoading] = useState(false);
+  const [accountError, setAccountError] = useState<string | null>(null);
+  const [subscriptionError, setSubscriptionError] = useState<string | null>(null);
 
   const loadSubscription = useCallback(
     async (currentStaff: Staff | null) => {
       if (!currentStaff?.clinic_id) {
         setSubscriptionStatus(null);
+        setSubscriptionError(null);
         return;
       }
 
       setSubscriptionLoading(true);
+      setSubscriptionError(null);
 
       try {
         const { data, error } = await supabase
@@ -73,6 +83,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (error) {
           console.error("Failed to load subscription:", error);
           setSubscriptionStatus(null);
+          setSubscriptionError(
+            "VetDesk could not verify this clinic's subscription status.",
+          );
           return;
         }
 
@@ -90,10 +103,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     async (currentSession: Session | null) => {
       setSession(currentSession);
       setUser(currentSession?.user ?? null);
+      setAccountError(null);
 
       if (!currentSession?.user) {
         setStaff(null);
         setSubscriptionStatus(null);
+        setSubscriptionError(null);
         setLoading(false);
         return;
       }
@@ -108,6 +123,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         console.error("Failed to provision staff:", error);
         setStaff(null);
         setSubscriptionStatus(null);
+        setAccountError(
+          "VetDesk could not load your clinic account. Please try again.",
+        );
       } finally {
         setLoading(false);
       }
@@ -135,6 +153,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await loadSubscription(staff);
   }
 
+  async function reloadAccount(): Promise<void> {
+    const {
+      data: { session: currentSession },
+    } = await supabase.auth.getSession();
+
+    await loadUserData(currentSession);
+  }
+
   async function signIn(
     email: string,
     password: string,
@@ -151,8 +177,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     email: string,
     password: string,
     name: string,
-  ): Promise<{ error: string | null }> {
-    const { error } = await supabase.auth.signUp({
+  ): Promise<{
+    error: string | null;
+    requiresEmailConfirmation: boolean;
+  }> {
+    const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: {
@@ -160,7 +189,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       },
     });
 
-    return { error: error?.message ?? null };
+    return {
+      error: error?.message ?? null,
+      requiresEmailConfirmation: !error && !data.session,
+    };
   }
 
   async function signOut(): Promise<void> {
@@ -179,7 +211,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         hasActiveSubscription,
         loading,
         subscriptionLoading,
+        accountError,
+        subscriptionError,
         refreshSubscription,
+        reloadAccount,
         signIn,
         signUp,
         signOut,

@@ -9,7 +9,6 @@ import {
   createRecall,
   updateRecall,
   createVisitPhoto,
-  deleteVisitPhoto,
 } from "@/lib/api"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -20,7 +19,7 @@ import jsPDF from "jspdf"
 import { Textarea } from "@/components/ui/textarea"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { formatDate } from "@/lib/format"
-import { ArrowLeft, PawPrint, Calendar, Weight, Loader as Loader2, Save, User, Syringe, Clock, FileText, Bell, CircleCheck as CheckCircle, Plus } from "lucide-react"
+import { ArrowLeft, PawPrint, Calendar, Weight, Loader as Loader2, Save, User, Syringe, Clock, FileText, Bell, CircleCheck as CheckCircle, Plus, Stethoscope } from "lucide-react"
 import { useToast } from "@/components/ui/use-toast"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -28,7 +27,6 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter,
 } from "@/components/ui/dialog"
 import { z } from "zod"
-import { useAuth } from "@/lib/auth"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from "@/components/ui/form"
@@ -50,13 +48,18 @@ const recallSchema = z.object({
   notes: z.string().optional().or(z.literal("")),
 })
 
+const ALLOWED_IMAGE_TYPES: Record<string, string> = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+}
+
 export default function PetDetail() {
   const { id } = useParams()
   const petId = Number(id)
   const { toast } = useToast()
   const queryClient = useQueryClient()
   const [uploadingVisitId, setUploadingVisitId] = useState<number | null>(null)
-  const { staff } = useAuth()
 
   const { data: petData, isLoading } = useQuery({
     queryKey: ["pet", petId],
@@ -100,7 +103,6 @@ export default function PetDetail() {
     mutationFn: (values: z.infer<typeof recallSchema>) =>
       createRecall({
         pet_id: petId,
-        clinic_id: staff?.clinic_id ?? 0,
         recall_type: values.recall_type,
         due_date: values.due_date,
         status: "upcoming",
@@ -164,10 +166,10 @@ export default function PetDetail() {
 
   if (!file) return
 
-  if (!file.type.startsWith("image/")) {
+  if (!ALLOWED_IMAGE_TYPES[file.type]) {
     toast({
       title: "Invalid file",
-      description: "Please select an image.",
+      description: "Please select a JPG, PNG, or WEBP image.",
       variant: "destructive",
     })
     return
@@ -187,7 +189,7 @@ export default function PetDetail() {
   try {
     setIsUploadingPhoto(true)
 
-    const fileExtension = file.name.split(".").pop()?.toLowerCase() || "jpg"
+    const fileExtension = ALLOWED_IMAGE_TYPES[file.type]
     const filePath = `pets/${petId}-${Date.now()}.${fileExtension}`
 
     const { error: uploadError } = await supabase.storage
@@ -201,12 +203,8 @@ export default function PetDetail() {
       throw uploadError
     }
 
-    const { data: publicUrlData } = supabase.storage
-      .from("pet-photos")
-      .getPublicUrl(filePath)
-
     await updatePet(petId, {
-      photo_url: publicUrlData.publicUrl,
+      photo_url: filePath,
     })
 
     await queryClient.invalidateQueries({
@@ -242,15 +240,15 @@ const handleVisitPhotoUpload = async (
     setUploadingVisitId(visitId)
 
     for (const file of files) {
-      if (!file.type.startsWith("image/")) {
-        throw new Error("Only image files are allowed.")
+      if (!ALLOWED_IMAGE_TYPES[file.type]) {
+        throw new Error("Only JPG, PNG, and WEBP images are allowed.")
       }
 
       if (file.size > 5 * 1024 * 1024) {
         throw new Error("Each image must be smaller than 5 MB.")
       }
 
-      const extension = file.name.split(".").pop()?.toLowerCase() || "jpg"
+      const extension = ALLOWED_IMAGE_TYPES[file.type]
       const filePath = `visits/${visitId}/${Date.now()}-${Math.random()
         .toString(36)
         .slice(2)}.${extension}`
@@ -264,13 +262,9 @@ const handleVisitPhotoUpload = async (
 
       if (uploadError) throw uploadError
 
-      const { data: publicUrlData } = supabase.storage
-        .from("pet-photos")
-        .getPublicUrl(filePath)
-
       await createVisitPhoto({
         visit_id: visitId,
-        photo_url: publicUrlData.publicUrl,
+        photo_url: filePath,
         caption: null,
       })
     }
@@ -599,7 +593,7 @@ const generateFullHistoryPdf = () => {
     key={photoInputKey}
     id="pet-photo-upload"
     type="file"
-    accept="image/*"
+    accept="image/jpeg,image/png,image/webp"
     className="hidden"
     onChange={handlePhotoUpload}
     disabled={isUploadingPhoto}
@@ -625,6 +619,11 @@ const generateFullHistoryPdf = () => {
               </div>
             </div>
             <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+              <Button asChild className="w-full sm:w-auto">
+                <Link href={`/pets/${petId}/clinical`}>
+                  <Stethoscope className="mr-2 h-4 w-4" /> Clinical Record
+                </Link>
+              </Button>
               <Button onClick={generateFullHistoryPdf} variant="outline" className="w-full sm:w-auto">
                 Download Full History PDF
               </Button>
@@ -847,7 +846,7 @@ const generateFullHistoryPdf = () => {
     <input
       id={`visit-photo-${visit.id}`}
       type="file"
-      accept="image/*"
+      accept="image/jpeg,image/png,image/webp"
       multiple
       className="hidden"
       disabled={uploadingVisitId === visit.id}

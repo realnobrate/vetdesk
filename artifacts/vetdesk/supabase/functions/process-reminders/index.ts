@@ -1,493 +1,359 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4"
+import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
+import {
+  escapeHtml,
+  isEmail,
+  sendWithResend,
+} from "../_shared/email.ts";
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+type SupabaseAdmin = ReturnType<typeof createClient>;
+
+interface QueueItem {
+  id: number;
+  clinic_id: number;
+  type: "appointment_reminder" | "vaccine_reminder";
+  target_id: number;
+  scheduled_for: string;
+  attempt_count: number;
+}
+
+type ProcessResult = "sent" | "cancelled" | "retrying" | "failed";
+
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+function isAuthorized(req: Request): boolean {
+  const secret = Deno.env.get("CRON_SECRET")?.trim();
+  if (!secret) return false;
+  return (
+    req.headers.get("x-cron-secret") === secret ||
+    req.headers.get("authorization") === `Bearer ${secret}`
+  );
+}
+
+async function updateQueue(
+  supabase: SupabaseAdmin,
+  id: number,
+  values: Record<string, unknown>,
+): Promise<void> {
+  const { error } = await supabase
+    .from("notification_queue")
+    .update(values)
+    .eq("id", id);
+  if (error) throw error;
+}
+
+async function cancelQueue(
+  supabase: SupabaseAdmin,
+  id: number,
+  reason: string,
+): Promise<"cancelled"> {
+  await updateQueue(supabase, id, {
+    status: "cancelled",
+    error_message: reason,
+    processing_started_at: null,
+  });
+  return "cancelled";
+}
+
+async function handleFailure(
+  supabase: SupabaseAdmin,
+  reminder: QueueItem,
+  message: string,
+): Promise<"retrying" | "failed"> {
+  const attempts = reminder.attempt_count + 1;
+  if (attempts < 3) {
+    const retryDelayMinutes = 5 * 2 ** (attempts - 1);
+    await updateQueue(supabase, reminder.id, {
+      status: "pending",
+      scheduled_for: new Date(Date.now() + retryDelayMinutes * 60_000).toISOString(),
+      error_message: message.slice(0, 500),
+      processing_started_at: null,
+    });
+    return "retrying";
+  }
+
+  await updateQueue(supabase, reminder.id, {
+    status: "failed",
+    error_message: message.slice(0, 500),
+    processing_started_at: null,
+  });
+  return "failed";
+}
+
+async function alreadySent(
+  supabase: SupabaseAdmin,
+  reminderId: number,
+): Promise<boolean> {
+  const { count, error } = await supabase
+    .from("sent_emails")
+    .select("id", { count: "exact", head: true })
+    .eq("notification_queue_id", reminderId)
+    .eq("status", "sent");
+  if (error) throw error;
+  return (count ?? 0) > 0;
+}
+
+async function finishEmail(
+  supabase: SupabaseAdmin,
+  reminder: QueueItem,
+  recipient: string,
+  subject: string,
+  html: string,
+  result: { success: boolean; error?: string },
+): Promise<ProcessResult> {
+  const { error: recordError } = await supabase.from("sent_emails").insert({
+    clinic_id: reminder.clinic_id,
+    notification_queue_id: reminder.id,
+    recipient_email: recipient,
+    subject,
+    body: html,
+    status: result.success ? "sent" : "failed",
+    error_message: result.error ?? null,
+  });
+  if (recordError) throw recordError;
+
+  if (!result.success) {
+    return handleFailure(supabase, reminder, result.error ?? "Email delivery failed");
+  }
+
+  await updateQueue(supabase, reminder.id, {
+    status: "sent",
+    error_message: null,
+    processing_started_at: null,
+  });
+  return "sent";
+}
+
+async function processAppointment(
+  supabase: SupabaseAdmin,
+  reminder: QueueItem,
+): Promise<ProcessResult> {
+  const { data: appointment, error } = await supabase
+    .from("appointments")
+    .select("*, pets(*, owners(*))")
+    .eq("id", reminder.target_id)
+    .maybeSingle();
+  if (error) throw error;
+  if (!appointment) return cancelQueue(supabase, reminder.id, "Appointment no longer exists");
+  if (appointment.clinic_id !== reminder.clinic_id) {
+    return cancelQueue(supabase, reminder.id, "Clinic mismatch");
+  }
+  if (appointment.status !== "scheduled") {
+    return cancelQueue(supabase, reminder.id, "Appointment is not scheduled");
+  }
+
+  const { data: clinic, error: clinicError } = await supabase
+    .from("clinics")
+    .select("name, phone, timezone, email_sender_name, reply_to_email, appointment_reminders_enabled")
+    .eq("id", reminder.clinic_id)
+    .single();
+  if (clinicError) throw clinicError;
+  if (!clinic.appointment_reminders_enabled) {
+    return cancelQueue(supabase, reminder.id, "Appointment reminders disabled");
+  }
+  if (await alreadySent(supabase, reminder.id)) {
+    await updateQueue(supabase, reminder.id, { status: "sent", processing_started_at: null });
+    return "sent";
+  }
+
+  const pet = appointment.pets;
+  const owner = pet?.owners;
+  const recipient = String(owner?.email ?? "").trim().toLowerCase();
+  if (!isEmail(recipient)) {
+    return handleFailure(supabase, reminder, "Owner has no valid email address");
+  }
+
+  const timeZone = clinic.timezone || "Europe/Belgrade";
+  const appointmentDate = new Date(appointment.scheduled_at);
+  const dateText = appointmentDate.toLocaleDateString("en-US", {
+    weekday: "long", year: "numeric", month: "long", day: "numeric", timeZone,
+  });
+  const timeText = appointmentDate.toLocaleTimeString("en-US", {
+    hour: "numeric", minute: "2-digit", timeZone,
+  });
+  const clinicName = escapeHtml(clinic.name);
+  const petName = escapeHtml(pet.name);
+  const ownerName = escapeHtml(`${owner.first_name} ${owner.last_name}`);
+  const subject = `Appointment reminder: ${pet.name} at ${clinic.name}`;
+  const html = `<!doctype html><html><body style="font-family:Arial,sans-serif;color:#1f2937;line-height:1.6">
+    <main style="max-width:600px;margin:0 auto;padding:24px">
+    <h1 style="color:#0d4f6c">Appointment reminder</h1>
+    <p>Dear ${ownerName},</p>
+    <p>This is a reminder for <strong>${petName}</strong> at <strong>${clinicName}</strong>.</p>
+    <div style="border-left:4px solid #0d4f6c;padding:12px 16px;background:#f8fafc">
+    <p><strong>Date:</strong> ${escapeHtml(dateText)}</p>
+    <p><strong>Time:</strong> ${escapeHtml(timeText)}</p>
+    <p><strong>Reason:</strong> ${escapeHtml(appointment.reason)}</p>
+    </div>
+    <p>Questions or changes? Contact ${clinicName}${clinic.phone ? ` at ${escapeHtml(clinic.phone)}` : ""}.</p>
+    </main></body></html>`;
+
+  const result = await sendWithResend({
+    to: recipient,
+    fromName: clinic.email_sender_name || "VetDesk",
+    replyTo: clinic.reply_to_email || undefined,
+    subject,
+    html,
+    idempotencyKey: `vetdesk-reminder-${reminder.id}`,
+  });
+  return finishEmail(supabase, reminder, recipient, subject, html, result);
+}
+
+async function processRecall(
+  supabase: SupabaseAdmin,
+  reminder: QueueItem,
+): Promise<ProcessResult> {
+  const { data: recall, error } = await supabase
+    .from("recalls")
+    .select("*, pets(*, owners(*))")
+    .eq("id", reminder.target_id)
+    .maybeSingle();
+  if (error) throw error;
+  if (!recall) return cancelQueue(supabase, reminder.id, "Recall no longer exists");
+  if (recall.clinic_id !== reminder.clinic_id) {
+    return cancelQueue(supabase, reminder.id, "Clinic mismatch");
+  }
+  if (recall.status === "completed") {
+    return cancelQueue(supabase, reminder.id, "Recall completed");
+  }
+
+  const { data: clinic, error: clinicError } = await supabase
+    .from("clinics")
+    .select("name, phone, timezone, email_sender_name, reply_to_email, recall_reminders_enabled")
+    .eq("id", reminder.clinic_id)
+    .single();
+  if (clinicError) throw clinicError;
+  if (!clinic.recall_reminders_enabled) {
+    return cancelQueue(supabase, reminder.id, "Recall reminders disabled");
+  }
+  if (await alreadySent(supabase, reminder.id)) {
+    await updateQueue(supabase, reminder.id, { status: "sent", processing_started_at: null });
+    return "sent";
+  }
+
+  const pet = recall.pets;
+  const owner = pet?.owners;
+  const recipient = String(owner?.email ?? "").trim().toLowerCase();
+  if (!isEmail(recipient)) {
+    return handleFailure(supabase, reminder, "Owner has no valid email address");
+  }
+
+  const timeZone = clinic.timezone || "Europe/Belgrade";
+  const dueText = new Date(`${recall.due_date}T12:00:00Z`).toLocaleDateString("en-US", {
+    weekday: "long", year: "numeric", month: "long", day: "numeric", timeZone,
+  });
+  const clinicName = escapeHtml(clinic.name);
+  const petName = escapeHtml(pet.name);
+  const ownerName = escapeHtml(`${owner.first_name} ${owner.last_name}`);
+  const recallType = escapeHtml(recall.recall_type);
+  const subject = `Preventive care reminder: ${recall.recall_type} for ${pet.name}`;
+  const html = `<!doctype html><html><body style="font-family:Arial,sans-serif;color:#1f2937;line-height:1.6">
+    <main style="max-width:600px;margin:0 auto;padding:24px">
+    <h1 style="color:#0d4f6c">Preventive care reminder</h1>
+    <p>Dear ${ownerName},</p>
+    <p><strong>${petName}</strong> is due for <strong>${recallType}</strong>.</p>
+    <div style="border-left:4px solid #0d4f6c;padding:12px 16px;background:#f8fafc">
+    <p><strong>Due date:</strong> ${escapeHtml(dueText)}</p>
+    </div>
+    <p>Contact ${clinicName}${clinic.phone ? ` at ${escapeHtml(clinic.phone)}` : ""} to arrange an appointment.</p>
+    </main></body></html>`;
+
+  const result = await sendWithResend({
+    to: recipient,
+    fromName: clinic.email_sender_name || "VetDesk",
+    replyTo: clinic.reply_to_email || undefined,
+    subject,
+    html,
+    idempotencyKey: `vetdesk-reminder-${reminder.id}`,
+  });
+  return finishEmail(supabase, reminder, recipient, subject, html, result);
 }
 
 serve(async (req) => {
-  // Handle CORS preflight requests
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders })
-  }
+  if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
+  if (!isAuthorized(req)) return json({ error: "Unauthorized" }, 401);
+
+  const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  const supabase = createClient(supabaseUrl, serviceKey);
 
   try {
-    // Initialize Supabase client with service role for admin access
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-    const resendApiKey = Deno.env.get('RESEND_API_KEY')!
+    const staleBefore = new Date(Date.now() - 15 * 60_000).toISOString();
+    const { error: staleRetryError } = await supabase
+      .from("notification_queue")
+      .update({ status: "pending", processing_started_at: null, error_message: "Recovered stale processing job" })
+      .eq("status", "processing")
+      .lt("processing_started_at", staleBefore)
+      .lt("attempt_count", 3);
+    if (staleRetryError) throw staleRetryError;
 
-    if (!resendApiKey) {
-      throw new Error('RESEND_API_KEY not configured')
-    }
+    const { error: staleFailureError } = await supabase
+      .from("notification_queue")
+      .update({
+        status: "failed",
+        processing_started_at: null,
+        error_message: "Reminder failed after three interrupted attempts",
+      })
+      .eq("status", "processing")
+      .lt("processing_started_at", staleBefore)
+      .gte("attempt_count", 3);
+    if (staleFailureError) throw staleFailureError;
 
-    const supabase = createClient(supabaseUrl, supabaseServiceKey)
+    const now = new Date().toISOString();
+    const { data, error } = await supabase
+      .from("notification_queue")
+      .select("id, clinic_id, type, target_id, scheduled_for, attempt_count")
+      .eq("status", "pending")
+      .lte("scheduled_for", now)
+      .order("scheduled_for")
+      .limit(50);
+    if (error) throw error;
 
-    // Fetch pending reminders that are due
-    const now = new Date().toISOString()
-    const { data: pendingReminders, error: fetchError } = await supabase
-      .from('notification_queue')
-      .select('*')
-      .eq('status', 'pending')
-      .lte('scheduled_for', now)
-      .order('scheduled_for', { ascending: true })
+    const counts: Record<ProcessResult | "skipped", number> = {
+      sent: 0, cancelled: 0, retrying: 0, failed: 0, skipped: 0,
+    };
 
-    if (fetchError) {
-      console.error('Failed to fetch pending reminders:', fetchError)
-      throw fetchError
-    }
+    for (const reminder of (data ?? []) as QueueItem[]) {
+      const { data: claimed, error: claimError } = await supabase
+        .from("notification_queue")
+        .update({
+          status: "processing",
+          processing_started_at: new Date().toISOString(),
+          attempt_count: reminder.attempt_count + 1,
+        })
+        .eq("id", reminder.id)
+        .eq("status", "pending")
+        .select("id")
+        .maybeSingle();
+      if (claimError) throw claimError;
+      if (!claimed) {
+        counts.skipped++;
+        continue;
+      }
 
-    if (!pendingReminders || pendingReminders.length === 0) {
-      return new Response(
-        JSON.stringify({ message: 'No pending reminders to process', processed: 0 }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
-    }
-
-    let processed = 0
-    let sent = 0
-    let failed = 0
-    let cancelled = 0
-
-    // Process each reminder
-    for (const reminder of pendingReminders) {
       try {
-        // Mark as processing to prevent duplicate processing
-        const { error: updateError } = await supabase
-          .from('notification_queue')
-          .update({ status: 'processing' })
-          .eq('id', reminder.id)
-          .eq('status', 'pending')
-
-        if (updateError) {
-          console.log(`Reminder ${reminder.id} already being processed, skipping`)
-          continue
-        }
-
-        if (reminder.type === 'appointment_reminder') {
-          const result = await processAppointmentReminder(supabase, reminder, resendApiKey)
-          if (result === 'sent') sent++
-          else if (result === 'failed') failed++
-          else if (result === 'cancelled') cancelled++
-        } else if (reminder.type === 'vaccine_reminder') {
-          const result = await processVaccineReminder(supabase, reminder, resendApiKey)
-          if (result === 'sent') sent++
-          else if (result === 'failed') failed++
-          else if (result === 'cancelled') cancelled++
-        }
-
-        processed++
+        const result = reminder.type === "appointment_reminder"
+          ? await processAppointment(supabase, reminder)
+          : await processRecall(supabase, reminder);
+        counts[result]++;
       } catch (error) {
-        console.error(`Failed to process reminder ${reminder.id}:`, error)
-        await supabase
-          .from('notification_queue')
-          .update({ 
-            status: 'failed',
-            error_message: error instanceof Error ? error.message : 'Unknown error'
-          })
-          .eq('id', reminder.id)
-        failed++
-        processed++
+        const result = await handleFailure(
+          supabase,
+          reminder,
+          error instanceof Error ? error.message : "Reminder processing failed",
+        );
+        counts[result]++;
       }
     }
 
-    return new Response(
-      JSON.stringify({
-        message: `Processed ${processed} reminders`,
-        processed,
-        sent,
-        failed,
-        cancelled
-      }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    )
+    return json({ processed: (data ?? []).length, ...counts });
   } catch (error) {
-    console.error('Error in process-reminders:', error)
-    return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Internal server error' }),
-      { 
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    )
+    console.error("process-reminders failed", error);
+    return json({ error: "Reminder processing failed" }, 500);
   }
-})
-
-async function processAppointmentReminder(
-  supabase: any,
-  reminder: any,
-  resendApiKey: string
-): Promise<'sent' | 'failed' | 'cancelled'> {
-  // Fetch appointment with pet and owner details
-  const { data: appointment, error } = await supabase
-    .from('appointments')
-    .select(`
-      *,
-      pets (*, owners (*))
-    `)
-    .eq('id', reminder.target_id)
-    .single()
-
-  if (error || !appointment) {
-    console.error(`Failed to fetch appointment ${reminder.target_id}:`, error)
-    throw new Error('Failed to fetch appointment details')
-  }
-
-  // Fetch clinic details
-  const { data: clinic } = await supabase
-    .from('clinics')
-    .select('*')
-    .eq('id', reminder.clinic_id)
-    .single()
-
-  if (!clinic) {
-    console.error(`Failed to fetch clinic ${reminder.clinic_id}`)
-    throw new Error('Failed to fetch clinic details')
-  }
-
-  // Check if reminders are enabled for this clinic
-  if (!clinic.appointment_reminders_enabled) {
-    await supabase
-      .from('notification_queue')
-      .update({ status: 'cancelled', error_message: 'Reminders disabled' })
-      .eq('id', reminder.id)
-    return 'cancelled'
-  }
-
-  const pet = appointment.pets
-  const owner = pet.owners
-
-  // Validate owner has email address
-  if (!owner.email) {
-    await supabase
-      .from('notification_queue')
-      .update({ status: 'failed', error_message: 'Owner has no email address' })
-      .eq('id', reminder.id)
-    return 'failed'
-  }
-
-  // Generate email content
-  // Format date and time using Europe/Belgrade timezone to ensure correct display
-  const appointmentDate = new Date(appointment.scheduled_at).toLocaleDateString('en-US', {
-    weekday: 'long',
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-    timeZone: 'Europe/Belgrade'
-  })
-  const appointmentTime = new Date(appointment.scheduled_at).toLocaleTimeString('en-US', {
-    hour: 'numeric',
-    minute: '2-digit',
-    timeZone: 'Europe/Belgrade'
-  })
-
-  const html = `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta charset="utf-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Appointment Reminder</title>
-    </head>
-    <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
-      <div style="background: #f8f9fa; padding: 30px; border-radius: 8px;">
-        <h1 style="color: #2563eb; margin-top: 0;">Appointment Reminder</h1>
-        
-        <p>Dear ${owner.first_name} ${owner.last_name},</p>
-        
-        <p>This is a friendly reminder that you have an upcoming appointment for <strong>${pet.name}</strong> at <strong>${clinic.name}</strong>.</p>
-        
-        <div style="background: white; padding: 20px; border-radius: 6px; border-left: 4px solid #2563eb; margin: 20px 0;">
-          <p style="margin: 0;"><strong>Date:</strong> ${appointmentDate}</p>
-          <p style="margin: 5px 0;"><strong>Time:</strong> ${appointmentTime}</p>
-          ${appointment.reason ? `<p style="margin: 5px 0;"><strong>Reason:</strong> ${appointment.reason}</p>` : ''}
-          ${appointment.vet_name ? `<p style="margin: 5px 0;"><strong>Veterinarian:</strong> Dr. ${appointment.vet_name}</p>` : ''}
-        </div>
-        
-        <p>If you need to reschedule or have any questions, please contact us at <strong>${clinic.phone || 'Contact clinic'}</strong>.</p>
-        
-        <p style="font-size: 14px; color: #666;">We look forward to seeing you and ${pet.name}!</p>
-        
-        <hr style="border: none; border-top: 1px solid #ddd; margin: 30px 0;">
-        
-        <p style="font-size: 12px; color: #999; margin: 0;">
-          This is an automated message from ${clinic.name}. Please do not reply to this email.
-        </p>
-      </div>
-    </body>
-    </html>
-  `
-
-  const subject = `Appointment Reminder: ${pet.name} at ${clinic.name}`
-
-  console.log(`Sending appointment reminder email to: ${owner.email}`)
-
-  // Send email via Resend
-  const emailResult = await sendEmailViaResend({
-    to: owner.email,
-    from: `${clinic.email_sender_name || 'VetDesk'} <onboarding@resend.dev>`,
-    subject,
-    html,
-    replyTo: clinic.reply_to_email || undefined
-  }, resendApiKey)
-
-  console.log(`Appointment reminder email result:`, { success: emailResult.success, error: emailResult.error })
-
-  // Record sent email in database
-  await supabase.from('sent_emails').insert({
-    clinic_id: reminder.clinic_id,
-    notification_queue_id: reminder.id,
-    recipient_email: owner.email,
-    subject,
-    body: html,
-    status: emailResult.success ? 'sent' : 'failed',
-    error_message: emailResult.error || null
-  })
-
-  // Update reminder status based on email result
-  if (emailResult.success) {
-    await supabase
-      .from('notification_queue')
-      .update({ status: 'sent' })
-      .eq('id', reminder.id)
-    return 'sent'
-  } else {
-    await supabase
-      .from('notification_queue')
-      .update({ status: 'failed', error_message: emailResult.error })
-      .eq('id', reminder.id)
-    return 'failed'
-  }
-}
-
-async function processVaccineReminder(
-  supabase: any,
-  reminder: any,
-  resendApiKey: string
-): Promise<'sent' | 'failed' | 'cancelled'> {
-  // Fetch recall with pet and owner details
-  const { data: recall, error } = await supabase
-    .from('recalls')
-    .select(`
-      *,
-      pets (*, owners (*))
-    `)
-    .eq('id', reminder.target_id)
-    .single()
-
-  if (error || !recall) {
-    console.error(`Failed to fetch recall ${reminder.target_id}:`, error)
-    throw new Error('Failed to fetch recall details')
-  }
-
-  // Cancel reminder if recall is already completed
-  if (recall.status === 'completed') {
-    await supabase
-      .from('notification_queue')
-      .update({ status: 'cancelled', error_message: 'Recall completed' })
-      .eq('id', reminder.id)
-    return 'cancelled'
-  }
-
-  // Fetch clinic details
-  const { data: clinic } = await supabase
-    .from('clinics')
-    .select('*')
-    .eq('id', reminder.clinic_id)
-    .single()
-
-  if (!clinic) {
-    console.error(`Failed to fetch clinic ${reminder.clinic_id}`)
-    throw new Error('Failed to fetch clinic details')
-  }
-
-  // Check if reminders are enabled for this clinic
-  if (!clinic.recall_reminders_enabled) {
-    await supabase
-      .from('notification_queue')
-      .update({ status: 'cancelled', error_message: 'Reminders disabled' })
-      .eq('id', reminder.id)
-    return 'cancelled'
-  }
-
-  const pet = recall.pets
-  const owner = pet.owners
-
-  // Validate owner has email address
-  if (!owner.email) {
-    await supabase
-      .from('notification_queue')
-      .update({ status: 'failed', error_message: 'Owner has no email address' })
-      .eq('id', reminder.id)
-    return 'failed'
-  }
-
-  // Check for duplicate reminders to prevent sending multiple emails for the same recall
-  // Only consider a reminder a duplicate if a successful email was already sent for the same target
-  // within the last 7 days. This prevents spamming the user while allowing re-reminders after a week.
-  const sevenDaysAgo = new Date()
-  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7)
-
-  // Find successful sent emails for the same clinic within 7 days
-  const { data: recentSentEmails } = await supabase
-    .from('sent_emails')
-    .select('id, notification_queue_id')
-    .eq('clinic_id', reminder.clinic_id)
-    .eq('status', 'sent')
-    .gte('sent_at', sevenDaysAgo.toISOString())
-
-  if (recentSentEmails && recentSentEmails.length > 0) {
-    // Get the notification_queue_ids from these sent emails
-    const queueIds = recentSentEmails.map(e => e.notification_queue_id).filter(Boolean)
-    
-    if (queueIds.length > 0) {
-      // Check if any of these queue entries have the same target_id (recall)
-      // Exclude the current reminder to avoid self-detection
-      const { data: duplicateQueueEntries } = await supabase
-        .from('notification_queue')
-        .select('id, target_id')
-        .in('id', queueIds)
-        .eq('type', 'vaccine_reminder')
-        .eq('target_id', reminder.target_id)
-        .neq('id', reminder.id)
-        .limit(1)
-
-      if (duplicateQueueEntries && duplicateQueueEntries.length > 0) {
-        await supabase
-          .from('notification_queue')
-          .update({ status: 'cancelled', error_message: 'Duplicate reminder' })
-          .eq('id', reminder.id)
-        return 'cancelled'
-      }
-    }
-  }
-
-  // Generate email content
-  // Format date using Europe/Belgrade timezone to ensure correct display
-  const dueDate = new Date(recall.due_date).toLocaleDateString('en-US', {
-    weekday: 'long',
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-    timeZone: 'Europe/Belgrade'
-  })
-
-  const html = `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta charset="utf-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Vaccination Reminder</title>
-    </head>
-    <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
-      <div style="background: #f8f9fa; padding: 30px; border-radius: 8px;">
-        <h1 style="color: #2563eb; margin-top: 0;">Vaccination Reminder</h1>
-        
-        <p>Dear ${owner.first_name} ${owner.last_name},</p>
-        
-        <p>This is a friendly reminder that <strong>${pet.name}</strong> is due for <strong>${recall.recall_type}</strong>.</p>
-        
-        <div style="background: white; padding: 20px; border-radius: 6px; border-left: 4px solid #2563eb; margin: 20px 0;">
-          <p style="margin: 0;"><strong>Pet:</strong> ${pet.name}</p>
-          <p style="margin: 5px 0;"><strong>Vaccine:</strong> ${recall.recall_type}</p>
-          <p style="margin: 5px 0;"><strong>Due Date:</strong> ${dueDate}</p>
-        </div>
-        
-        <p>Please contact <strong>${clinic.name}</strong> at <strong>${clinic.phone || 'Contact clinic'}</strong> to schedule an appointment.</p>
-        
-        <p style="font-size: 14px; color: #666;">Keeping up with vaccinations is important for ${pet.name}'s health!</p>
-        
-        <hr style="border: none; border-top: 1px solid #ddd; margin: 30px 0;">
-        
-        <p style="font-size: 12px; color: #999; margin: 0;">
-          This is an automated message from ${clinic.name}. Please do not reply to this email.
-        </p>
-      </div>
-    </body>
-    </html>
-  `
-
-  const subject = `Vaccination Reminder: ${recall.recall_type} for ${pet.name}`
-
-  console.log(`Sending vaccination reminder email to: ${owner.email}`)
-
-  // Send email via Resend
-  const emailResult = await sendEmailViaResend({
-    to: owner.email,
-    from: `${clinic.email_sender_name || 'VetDesk'} <onboarding@resend.dev>`,
-    subject,
-    html,
-    replyTo: clinic.reply_to_email || undefined
-  }, resendApiKey)
-
-  console.log(`Vaccination reminder email result:`, { success: emailResult.success, error: emailResult.error })
-
-  // Record sent email in database
-  await supabase.from('sent_emails').insert({
-    clinic_id: reminder.clinic_id,
-    notification_queue_id: reminder.id,
-    recipient_email: owner.email,
-    subject,
-    body: html,
-    status: emailResult.success ? 'sent' : 'failed',
-    error_message: emailResult.error || null
-  })
-
-  // Update reminder status based on email result
-  if (emailResult.success) {
-    await supabase
-      .from('notification_queue')
-      .update({ status: 'sent' })
-      .eq('id', reminder.id)
-    return 'sent'
-  } else {
-    await supabase
-      .from('notification_queue')
-      .update({ status: 'failed', error_message: emailResult.error })
-      .eq('id', reminder.id)
-    return 'failed'
-  }
-}
-
-async function sendEmailViaResend(
-  email: { to: string; from: string; subject: string; html: string; replyTo?: string },
-  apiKey: string
-): Promise<{ success: boolean; error?: string }> {
-  try {
-    console.log(`Resend API request:`, { to: email.to, from: email.from, subject: email.subject })
-    
-    const response = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        from: email.from,
-        to: email.to,
-        subject: email.subject,
-        html: email.html,
-        replyTo: email.replyTo,
-      }),
-    })
-
-    const data = await response.json()
-    console.log(`Resend API response:`, { status: response.status, ok: response.ok, data })
-
-    if (!response.ok) {
-      const errorMessage = data.message || data.error || JSON.stringify(data)
-      console.error('Resend API error:', { status: response.status, errorMessage })
-      return { success: false, error: errorMessage }
-    }
-
-    console.log('Resend API: Email sent successfully')
-    return { success: true }
-  } catch (error) {
-    console.error('Resend API network error:', error)
-    return { 
-      success: false, 
-      error: error instanceof Error ? error.message : 'Unknown error' 
-    }
-  }
-}
+});

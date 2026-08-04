@@ -58,8 +58,8 @@ export default function Dashboard() {
               <p className="mt-1 text-sm text-muted-foreground sm:text-base">Review appointments, recalls, and patient activity from a single polished overview.</p>
             </div>
             <div className="rounded-2xl border border-border/70 bg-background/80 px-4 py-3 text-sm text-muted-foreground">
-              <div className="font-semibold text-foreground">Live status</div>
-              <div className="mt-1">Everything is synced and ready.</div>
+              <div className="font-semibold text-foreground">Secure workspace</div>
+              <div className="mt-1">Signed in as {staff?.name ?? "clinic staff"}.</div>
             </div>
           </div>
         </div>

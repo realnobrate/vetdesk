@@ -15,15 +15,17 @@ const navItems = [
   { href: "/owners", label: "Owners & Pets", icon: Users },
   { href: "/recalls", label: "Recalls", icon: Bell },
   {
-  href: "/staff",
-  label: "Staff",
-  icon: Users,
-},
+    href: "/staff",
+    label: "Staff",
+    icon: Users,
+    adminOnly: true,
+  },
   {
-  label: "Clinic Settings",
-  href: "/clinic-settings",
-  icon: Settings,
-},
+    label: "Clinic Settings",
+    href: "/clinic-settings",
+    icon: Settings,
+    adminOnly: true,
+  },
 ]
 
 function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
@@ -54,11 +56,14 @@ const { data: clinic } = useQuery({
 </div>
 
       <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
-        {navItems.map((item) => {
+        {navItems
+          .filter((item) => !item.adminOnly || staff?.role === "admin")
+          .map((item) => {
           const isActive = location === item.href || location.startsWith(`${item.href}/`)
           return (
             <Link key={item.href} href={item.href} className="block" onClick={onNavigate}>
               <div
+                aria-current={isActive ? "page" : undefined}
                 className={cn(
                   "flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200",
                   isActive

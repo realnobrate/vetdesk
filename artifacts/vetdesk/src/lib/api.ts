@@ -1,5 +1,9 @@
 import { supabase } from "./supabase";
-import { addMonths as addMonthsDateFns } from "date-fns";
+import {
+  addDays as addDaysDateFns,
+  addMonths as addMonthsDateFns,
+  startOfDay as startOfDayDateFns,
+} from "date-fns";
 import type {
   Staff,
   Owner,
@@ -14,10 +18,68 @@ import type {
   DashboardSummary,
   VisitPhoto,
   Clinic,
-  NotificationQueue,
-  SentEmail,
   EmailStatistics,
+  StaffRole,
+  CreateVisitInput,
+  Vaccination,
+  Prescription,
+  LabOrder,
+  LabOrderStatus,
+  ClinicalDocument,
+  ClinicalRecordData,
+  MedicalNoteTemplate,
 } from "./types";
+
+interface OwnerWithPetsRow extends Owner {
+  pets: Pet[] | null;
+}
+
+interface AppointmentJoinRow extends Appointment {
+  pets: Pet & { owners: Owner };
+}
+
+interface RecallJoinRow extends Recall {
+  pets: Pet & { owners: Owner };
+}
+
+function getErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
+function sanitizeSearchTerm(value: string): string {
+  return value.trim().replace(/[,%()]/g, " ").replace(/\s+/g, " ");
+}
+
+async function signPetPhotoPaths(
+  values: Array<string | null | undefined>,
+): Promise<Map<string, string>> {
+  const paths = [...new Set(values.filter(
+    (value): value is string => Boolean(value) && !/^https?:\/\//i.test(value as string),
+  ))];
+  if (paths.length === 0) return new Map();
+
+  const { data, error } = await supabase.storage
+    .from("pet-photos")
+    .createSignedUrls(paths, 60 * 60);
+  if (error) throw error;
+
+  const entries: Array<[string, string]> = [];
+  for (const item of data ?? []) {
+    if (typeof item.path === "string" && typeof item.signedUrl === "string") {
+      entries.push([item.path, item.signedUrl]);
+    }
+  }
+  return new Map(entries);
+}
+
+function resolvePhotoUrl(
+  value: string | null | undefined,
+  signedUrls: Map<string, string>,
+): string | null {
+  if (!value) return null;
+  if (/^https?:\/\//i.test(value)) return value;
+  return signedUrls.get(value) ?? null;
+}
 
 // ─── Recall status refresh ────────────────────────────────────────────────────
 
@@ -72,7 +134,7 @@ export async function getOrCreateStaff(): Promise<Staff> {
   }
 
   const { data, error } = await supabase
-    .rpc("provision_my_clinic")
+    .rpc("provision_vetdesk_clinic")
     .single();
 
   if (error || !data) {
@@ -85,18 +147,50 @@ export async function getOrCreateStaff(): Promise<Staff> {
   return data as Staff;
 }
 
+async function requireCurrentStaff(): Promise<Staff> {
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser();
+
+  if (userError) throw userError;
+  if (!user) throw new Error("User is not authenticated");
+
+  const { data, error } = await supabase
+    .from("staff")
+    .select("*")
+    .eq("user_id", user.id)
+    .eq("status", "active")
+    .maybeSingle();
+
+  if (error) throw error;
+  if (!data?.clinic_id) {
+    throw new Error("Your active staff account is not connected to a clinic.");
+  }
+
+  return data as Staff;
+}
+
+async function requireCurrentClinicId(): Promise<number> {
+  const staff = await requireCurrentStaff();
+  return staff.clinic_id as number;
+}
+
 // ─── Owners ───────────────────────────────────────────────────────────────────
 
 export async function listOwners(search?: string): Promise<Owner[]> {
   let q = supabase
     .from("owners")
     .select("*")
+    .is("deleted_at", null)
     .order("last_name")
     .order("first_name");
 
   if (search) {
+    const safeSearch = sanitizeSearchTerm(search);
+    if (!safeSearch) return [];
     q = q.or(
-      `first_name.ilike.%${search}%,last_name.ilike.%${search}%,email.ilike.%${search}%,phone.ilike.%${search}%`
+      `first_name.ilike.%${safeSearch}%,last_name.ilike.%${safeSearch}%,email.ilike.%${safeSearch}%,phone.ilike.%${safeSearch}%`
     );
   }
 
@@ -106,60 +200,36 @@ export async function listOwners(search?: string): Promise<Owner[]> {
 }
 
 export async function listOwnersWithPets(): Promise<OwnerWithPets[]> {
-  const { data: owners, error } = await supabase
+  const { data, error } = await supabase
     .from("owners")
-    .select("*")
+    .select("*, pets(*)")
+    .is("deleted_at", null)
     .order("last_name")
     .order("first_name");
 
   if (error) throw error;
 
-  const ownersWithPets = await Promise.all(
-    (owners ?? []).map(async (owner) => {
-      const { data: pets } = await supabase
-        .from("pets")
-        .select("*")
-        .eq("owner_id", owner.id)
-        .order("name");
-
-      return { ...(owner as Owner), pets: (pets ?? []) as Pet[] };
-    })
-  );
-
-  return ownersWithPets;
+  return ((data ?? []) as OwnerWithPetsRow[]).map((row) => ({
+    ...row,
+    pets: [...(row.pets ?? [])]
+      .filter((pet) => !pet.deleted_at)
+      .sort((a, b) => a.name.localeCompare(b.name)),
+  }));
 }
 
 export async function createOwner(
-  input: Omit<Owner, "id" | "clinic_id" | "created_at">
+  input: Omit<
+    Owner,
+    "id" | "clinic_id" | "created_at" | "deleted_at" | "deleted_by"
+  >
 ): Promise<Owner> {
-  const {
-    data: { user },
-    error: userError,
-  } = await supabase.auth.getUser();
-
-  if (userError) throw userError;
-  if (!user) throw new Error("User is not authenticated");
-
-  const { data: staff, error: staffError } = await supabase
-    .from("staff")
-    .select("clinic_id")
-    .eq("user_id", user.id)
-    .limit(1)
-    .maybeSingle();
-
-  if (staffError) throw staffError;
-
-  if (!staff?.clinic_id) {
-    throw new Error(
-      "Your account is not connected to a clinic. Check the user_id in the staff table."
-    );
-  }
+  const clinicId = await requireCurrentClinicId();
 
   const { data, error } = await supabase
     .from("owners")
     .insert({
       ...input,
-      clinic_id: staff.clinic_id,
+      clinic_id: clinicId,
     })
     .select()
     .single();
@@ -170,20 +240,21 @@ export async function createOwner(
 }
 
 export async function getOwner(id: number): Promise<OwnerWithPets> {
-  const { data: owner, error } = await supabase
+  const { data, error } = await supabase
     .from("owners")
-    .select("*")
+    .select("*, pets(*)")
     .eq("id", id)
+    .is("deleted_at", null)
     .single();
   if (error) throw error;
 
-  const { data: pets } = await supabase
-    .from("pets")
-    .select("*")
-    .eq("owner_id", id)
-    .order("name");
-
-  return { ...(owner as Owner), pets: (pets ?? []) as Pet[] };
+  const row = data as OwnerWithPetsRow;
+  return {
+    ...row,
+    pets: [...(row.pets ?? [])]
+      .filter((pet) => !pet.deleted_at)
+      .sort((a, b) => a.name.localeCompare(b.name)),
+  };
 }
 
 export async function updateOwner(
@@ -201,7 +272,9 @@ export async function updateOwner(
 }
 
 export async function deleteOwner(id: number): Promise<void> {
-  const { error } = await supabase.from("owners").delete().eq("id", id);
+  const { error } = await supabase.rpc("soft_delete_owner", {
+    target_owner_id: id,
+  });
   if (error) throw error;
 }
 
@@ -213,6 +286,7 @@ export async function listPets(
   let q = supabase
     .from("pets")
     .select("*")
+    .is("deleted_at", null)
     .order("name");
 
   if (opts?.ownerId) q = q.eq("owner_id", opts.ownerId);
@@ -224,11 +298,33 @@ export async function listPets(
 }
 
 export async function createPet(
-  input: Omit<Pet, "id" | "created_at">
+  input: Pick<Pet, "owner_id" | "name" | "species"> &
+    Partial<
+      Pick<
+        Pet,
+        | "breed"
+        | "sex"
+        | "birth_date"
+        | "weight_lb"
+        | "notes"
+        | "photo_url"
+        | "microchip_number"
+        | "allergies"
+        | "chronic_conditions"
+        | "important_warnings"
+        | "insurance_provider"
+        | "insurance_policy_number"
+        | "reproductive_status"
+        | "is_deceased"
+        | "deceased_on"
+        | "cause_of_death"
+      >
+    >
 ): Promise<Pet> {
+  const clinicId = await requireCurrentClinicId();
   const { data, error } = await supabase
     .from("pets")
-    .insert(input)
+    .insert({ ...input, clinic_id: clinicId })
     .select()
     .single();
   if (error) throw error;
@@ -240,20 +336,24 @@ export async function getPet(id: number): Promise<PetDetail> {
     .from("pets")
     .select("*")
     .eq("id", id)
+    .is("deleted_at", null)
     .single();
   if (error) throw error;
 
-  const { data: owner } = await supabase
+  const { data: owner, error: ownerError } = await supabase
     .from("owners")
     .select("*")
     .eq("id", (pet as Pet).owner_id)
+    .is("deleted_at", null)
     .single();
+  if (ownerError) throw ownerError;
 
-  const { data: visits } = await supabase
+  const { data: visits, error: visitsError } = await supabase
     .from("visits")
     .select("*")
     .eq("pet_id", id)
     .order("visit_date");
+  if (visitsError) throw visitsError;
 
     const visitIds = (visits ?? []).map((visit) => visit.id)
 
@@ -271,18 +371,31 @@ if (visitIds.length > 0) {
   visitPhotos = (photos ?? []) as VisitPhoto[]
 }
 
-  const { data: recalls } = await supabase
+  const { data: recalls, error: recallsError } = await supabase
     .from("recalls")
     .select("*")
     .eq("pet_id", id)
     .order("due_date");
+  if (recallsError) throw recallsError;
+
+  const petRecord = pet as Pet;
+  const signedUrls = await signPetPhotoPaths([
+    petRecord.photo_url,
+    ...visitPhotos.map((photo) => photo.photo_url),
+  ]);
 
   return {
-    ...(pet as Pet),
+    ...petRecord,
+    photo_url: resolvePhotoUrl(petRecord.photo_url, signedUrls),
     owner: owner as Owner,
     visits: ((visits ?? []) as Visit[]).map((visit) => ({
   ...visit,
-  photos: visitPhotos.filter((photo) => photo.visit_id === visit.id),
+  photos: visitPhotos
+    .filter((photo) => photo.visit_id === visit.id)
+    .map((photo) => ({
+      ...photo,
+      photo_url: resolvePhotoUrl(photo.photo_url, signedUrls) ?? "",
+    })),
 })),
     recalls: (recalls ?? []) as Recall[],
   };
@@ -303,7 +416,9 @@ export async function updatePet(
 }
 
 export async function deletePet(id: number): Promise<void> {
-  const { error } = await supabase.from("pets").delete().eq("id", id);
+  const { error } = await supabase.rpc("soft_delete_pet", {
+    target_pet_id: id,
+  });
   if (error) throw error;
 }
 
@@ -311,11 +426,20 @@ export async function deletePet(id: number): Promise<void> {
 
 export async function createVisit(
   petId: number,
-  input: Omit<Visit, "id" | "pet_id" | "created_at">
+  input: CreateVisitInput,
 ): Promise<Visit> {
+  const clinicId = await requireCurrentClinicId();
   const { data, error } = await supabase
     .from("visits")
-    .insert({ ...input, pet_id: petId })
+    .insert({
+      ...input,
+      clinic_id: clinicId,
+      pet_id: petId,
+      finalized_at:
+        input.record_status === "draft"
+          ? null
+          : input.finalized_at ?? new Date().toISOString(),
+    })
     .select()
     .single();
   if (error) throw error;
@@ -327,13 +451,15 @@ export async function createVisit(
   for (const vaccine of visit.vaccines_administered) {
     const months = resolveRecallMonths(vaccine);
     if (months === null) continue;
-    await supabase.from("recalls").insert({
+    const { error: recallError } = await supabase.from("recalls").insert({
       pet_id: petId,
+      clinic_id: clinicId,
       visit_id: visit.id,
       recall_type: vaccine,
       due_date: addMonths(visitDateStr, months),
       status: "upcoming",
     });
+    if (recallError) throw recallError;
   }
 
   return visit;
@@ -358,6 +484,340 @@ export async function deleteVisit(id: number): Promise<void> {
   if (error) throw error;
 }
 
+// ─── Clinical record ──────────────────────────────────────────────────────────
+
+async function requireClinicalStaff(): Promise<Staff> {
+  const staff = await requireCurrentStaff();
+  if (staff.role !== "admin" && staff.role !== "veterinarian") {
+    throw new Error("Only veterinarians and clinic administrators can change clinical records.");
+  }
+  return staff;
+}
+
+export async function getClinicalRecord(
+  petId: number,
+): Promise<ClinicalRecordData> {
+  const pet = await getPet(petId);
+
+  const [vaccinationsResult, prescriptionsResult, labsResult, documentsResult, templatesResult] =
+    await Promise.all([
+      supabase
+        .from("vaccinations")
+        .select("*")
+        .eq("pet_id", petId)
+        .is("deleted_at", null)
+        .order("administered_on", { ascending: false }),
+      supabase
+        .from("prescriptions")
+        .select("*")
+        .eq("pet_id", petId)
+        .is("deleted_at", null)
+        .order("starts_on", { ascending: false }),
+      supabase
+        .from("lab_orders")
+        .select("*")
+        .eq("pet_id", petId)
+        .is("deleted_at", null)
+        .order("created_at", { ascending: false }),
+      supabase
+        .from("clinical_documents")
+        .select("*")
+        .eq("pet_id", petId)
+        .is("deleted_at", null)
+        .order("created_at", { ascending: false }),
+      supabase
+        .from("medical_note_templates")
+        .select("*")
+        .eq("clinic_id", pet.clinic_id)
+        .is("archived_at", null)
+        .order("name"),
+    ]);
+
+  const firstError = [
+    vaccinationsResult.error,
+    prescriptionsResult.error,
+    labsResult.error,
+    documentsResult.error,
+    templatesResult.error,
+  ].find(Boolean);
+  if (firstError) throw firstError;
+
+  const documentRows = (documentsResult.data ?? []) as Omit<
+    ClinicalDocument,
+    "signed_url"
+  >[];
+  const paths = documentRows.map((document) => document.storage_path);
+  const signedDocumentUrls = new Map<string, string>();
+
+  if (paths.length > 0) {
+    const { data: signed, error: signedError } = await supabase.storage
+      .from("medical-documents")
+      .createSignedUrls(paths, 60 * 60);
+    if (signedError) throw signedError;
+    for (const item of signed ?? []) {
+      if (item.path && item.signedUrl) {
+        signedDocumentUrls.set(item.path, item.signedUrl);
+      }
+    }
+  }
+
+  return {
+    pet,
+    vaccinations: (vaccinationsResult.data ?? []) as Vaccination[],
+    prescriptions: (prescriptionsResult.data ?? []) as Prescription[],
+    labOrders: (labsResult.data ?? []) as LabOrder[],
+    documents: documentRows.map((document) => ({
+      ...document,
+      signed_url: signedDocumentUrls.get(document.storage_path) ?? null,
+    })),
+    noteTemplates: (templatesResult.data ?? []) as MedicalNoteTemplate[],
+  };
+}
+
+export async function createVaccination(
+  petId: number,
+  input: {
+    visit_id?: number | null;
+    vaccine_name: string;
+    manufacturer?: string | null;
+    lot_number?: string | null;
+    expires_on?: string | null;
+    administered_on: string;
+    administration_site?: string | null;
+    next_due_date?: string | null;
+    notes?: string | null;
+  },
+): Promise<Vaccination> {
+  const staff = await requireClinicalStaff();
+  const { data, error } = await supabase
+    .from("vaccinations")
+    .insert({
+      ...input,
+      clinic_id: staff.clinic_id,
+      pet_id: petId,
+      veterinarian_staff_id: staff.id,
+      created_by: staff.user_id,
+    })
+    .select()
+    .single();
+  if (error) throw error;
+  return data as Vaccination;
+}
+
+export async function createPrescription(
+  petId: number,
+  input: {
+    visit_id?: number | null;
+    medication_name: string;
+    dosage: string;
+    frequency: string;
+    duration?: string | null;
+    route?: string | null;
+    instructions: string;
+    starts_on: string;
+    ends_on?: string | null;
+    refills_allowed?: number;
+    medication_warnings?: string | null;
+  },
+): Promise<Prescription> {
+  const staff = await requireClinicalStaff();
+  const refills = input.refills_allowed ?? 0;
+  const { data, error } = await supabase
+    .from("prescriptions")
+    .insert({
+      ...input,
+      clinic_id: staff.clinic_id,
+      pet_id: petId,
+      prescriber_staff_id: staff.id,
+      created_by: staff.user_id,
+      refills_allowed: refills,
+      refills_remaining: refills,
+    })
+    .select()
+    .single();
+  if (error) throw error;
+  return data as Prescription;
+}
+
+export async function updatePrescriptionStatus(
+  prescriptionId: number,
+  status: "active" | "completed" | "discontinued",
+): Promise<Prescription> {
+  await requireClinicalStaff();
+  const { data, error } = await supabase
+    .from("prescriptions")
+    .update({
+      status,
+      discontinued_at: status === "discontinued" ? new Date().toISOString() : null,
+    })
+    .eq("id", prescriptionId)
+    .select()
+    .single();
+  if (error) throw error;
+  return data as Prescription;
+}
+
+export async function createLabOrder(
+  petId: number,
+  input: {
+    visit_id?: number | null;
+    test_name: string;
+    category: string;
+    laboratory_type: "internal" | "external";
+    laboratory_name?: string | null;
+    sample_type?: string | null;
+    notes?: string | null;
+  },
+): Promise<LabOrder> {
+  const staff = await requireClinicalStaff();
+  const { data, error } = await supabase
+    .from("lab_orders")
+    .insert({
+      ...input,
+      clinic_id: staff.clinic_id,
+      pet_id: petId,
+      ordered_by_staff_id: staff.id,
+      created_by: staff.user_id,
+    })
+    .select()
+    .single();
+  if (error) throw error;
+  return data as LabOrder;
+}
+
+export async function updateLabOrder(
+  labOrderId: number,
+  update: {
+    status?: LabOrderStatus;
+    sample_collected_at?: string | null;
+    result_text?: string | null;
+    result_numeric?: number | null;
+    result_unit?: string | null;
+    reference_range?: string | null;
+    is_abnormal?: boolean;
+    reviewed?: boolean;
+    owner_notified?: boolean;
+    notes?: string | null;
+  },
+): Promise<LabOrder> {
+  const staff = await requireClinicalStaff();
+  const { reviewed, owner_notified: ownerNotified, ...values } = update;
+  const databaseUpdate: Record<string, unknown> = { ...values };
+  if (reviewed !== undefined) {
+    databaseUpdate.reviewed_at = reviewed ? new Date().toISOString() : null;
+    databaseUpdate.reviewed_by_staff_id = reviewed ? staff.id : null;
+  }
+  if (ownerNotified !== undefined) {
+    databaseUpdate.owner_notified_at = ownerNotified
+      ? new Date().toISOString()
+      : null;
+  }
+
+  const { data, error } = await supabase
+    .from("lab_orders")
+    .update(databaseUpdate)
+    .eq("id", labOrderId)
+    .select()
+    .single();
+  if (error) throw error;
+  return data as LabOrder;
+}
+
+export async function createMedicalNoteTemplate(input: {
+  name: string;
+  presenting_complaint?: string | null;
+  subjective_notes?: string | null;
+  objective_notes?: string | null;
+  assessment?: string | null;
+  treatment_plan?: string | null;
+  follow_up_recommendations?: string | null;
+}): Promise<MedicalNoteTemplate> {
+  const staff = await requireClinicalStaff();
+  const { data, error } = await supabase
+    .from("medical_note_templates")
+    .insert({
+      ...input,
+      clinic_id: staff.clinic_id,
+      created_by: staff.user_id,
+    })
+    .select()
+    .single();
+  if (error) throw error;
+  return data as MedicalNoteTemplate;
+}
+
+const CLINICAL_DOCUMENT_TYPES: Record<string, string> = {
+  "application/pdf": "pdf",
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+};
+
+export async function uploadClinicalDocument(
+  petId: number,
+  file: File,
+  input: {
+    document_type: string;
+    visit_id?: number | null;
+    lab_order_id?: number | null;
+    client_visible?: boolean;
+  },
+): Promise<ClinicalDocument> {
+  const staff = await requireClinicalStaff();
+  const extension = CLINICAL_DOCUMENT_TYPES[file.type];
+  if (!extension) {
+    throw new Error("Only PDF, JPG, PNG, and WEBP clinical documents are allowed.");
+  }
+  if (file.size <= 0 || file.size > 10 * 1024 * 1024) {
+    throw new Error("Clinical documents must be smaller than 10 MB.");
+  }
+
+  const safeName = file.name
+    .replace(/\.[^.]+$/, "")
+    .replace(/[^a-zA-Z0-9-_]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80) || "document";
+  const storagePath = `clinics/${staff.clinic_id}/pets/${petId}/${crypto.randomUUID()}-${safeName}.${extension}`;
+
+  const { error: uploadError } = await supabase.storage
+    .from("medical-documents")
+    .upload(storagePath, file, {
+      cacheControl: "3600",
+      contentType: file.type,
+      upsert: false,
+    });
+  if (uploadError) throw uploadError;
+
+  const { data, error } = await supabase
+    .from("clinical_documents")
+    .insert({
+      ...input,
+      clinic_id: staff.clinic_id,
+      pet_id: petId,
+      display_name: file.name.slice(0, 255),
+      storage_path: storagePath,
+      mime_type: file.type,
+      size_bytes: file.size,
+      uploaded_by: staff.user_id,
+    })
+    .select()
+    .single();
+
+  if (error) {
+    await supabase.storage.from("medical-documents").remove([storagePath]);
+    throw error;
+  }
+
+  const { data: signed } = await supabase.storage
+    .from("medical-documents")
+    .createSignedUrl(storagePath, 60 * 60);
+
+  return {
+    ...(data as Omit<ClinicalDocument, "signed_url">),
+    signed_url: signed?.signedUrl ?? null,
+  };
+}
+
 // ─── Recalls ──────────────────────────────────────────────────────────────────
 
 async function refreshRecallStatuses(): Promise<void> {
@@ -379,10 +839,11 @@ async function refreshRecallStatuses(): Promise<void> {
     else if (recall.due_date <= dueSoonStr) next = "due";
 
     if (next !== recall.status) {
-      await supabase
+      const { error } = await supabase
         .from("recalls")
         .update({ status: next })
         .eq("id", recall.id);
+      if (error) throw error;
     }
   }
 }
@@ -403,7 +864,7 @@ export async function listRecalls(
   const { data, error } = await q;
   if (error) throw error;
 
-  return (data ?? []).map((row: any) => {
+  return ((data ?? []) as RecallJoinRow[]).map((row) => {
     const { pets, ...recall } = row;
     const { owners, ...pet } = pets;
     return { ...recall, pet, owner: owners } as RecallWithPet;
@@ -411,69 +872,20 @@ export async function listRecalls(
 }
 
 export async function createRecall(
-  input: Omit<Recall, "id" | "created_at" | "sent_at" | "completed_at">
+  input: Omit<
+    Recall,
+    "id" | "clinic_id" | "created_at" | "sent_at" | "completed_at"
+  >
 ): Promise<Recall> {
+  const clinicId = await requireCurrentClinicId();
   const { data, error } = await supabase
     .from("recalls")
-    .insert(input)
+    .insert({ ...input, clinic_id: clinicId })
     .select()
     .single();
   if (error) throw error;
-  
-  const recall = data as Recall;
-  
-  // Schedule vaccine reminders if enabled
-  try {
-    const { data: clinic } = await supabase
-      .from("clinics")
-      .select("recall_reminders_enabled, recall_reminder_days_before")
-      .eq("id", recall.clinic_id)
-      .single();
-    
-    if (clinic?.recall_reminders_enabled && recall.due_date) {
-      const dueDate = new Date(recall.due_date);
-      const daysBefore = clinic.recall_reminder_days_before || 7;
-      
-      // Schedule reminder X days before due date
-      const reminderDateBefore = new Date(dueDate.getTime() - daysBefore * 24 * 60 * 60 * 1000);
-      if (reminderDateBefore > new Date()) {
-        await supabase.from("notification_queue").insert({
-          clinic_id: recall.clinic_id,
-          type: "vaccine_reminder",
-          target_id: recall.id,
-          scheduled_for: reminderDateBefore.toISOString(),
-          status: "pending"
-        });
-      }
-      
-      // Schedule reminder on due date
-      if (dueDate > new Date()) {
-        await supabase.from("notification_queue").insert({
-          clinic_id: recall.clinic_id,
-          type: "vaccine_reminder",
-          target_id: recall.id,
-          scheduled_for: dueDate.toISOString(),
-          status: "pending"
-        });
-      }
-      
-      // Schedule reminder 7 days after due date
-      const overdueDate = new Date(dueDate.getTime() + 7 * 24 * 60 * 60 * 1000);
-      if (overdueDate > new Date()) {
-        await supabase.from("notification_queue").insert({
-          clinic_id: recall.clinic_id,
-          type: "vaccine_reminder",
-          target_id: recall.id,
-          scheduled_for: overdueDate.toISOString(),
-          status: "pending"
-        });
-      }
-    }
-  } catch (err) {
-    console.error("Failed to schedule vaccine reminders:", err);
-  }
-  
-  return recall;
+
+  return data as Recall;
 }
 
 export async function updateRecall(
@@ -483,12 +895,13 @@ export async function updateRecall(
   >
 ): Promise<Recall> {
   // Fetch existing recall first
-  const { data: existing } = await supabase
+  const { data: existing, error: existingError } = await supabase
     .from("recalls")
     .select("*")
     .eq("id", id)
     .single();
   
+  if (existingError) throw existingError;
   if (!existing) throw new Error("Recall not found");
   
   const patch: Record<string, unknown> = { ...update };
@@ -504,81 +917,8 @@ export async function updateRecall(
     .single();
   if (error) throw error;
   
-  const recall = data as Recall;
-  
-  // Cancel existing pending reminders if recall is completed
-  if (update.status === "completed") {
-    await supabase
-      .from("notification_queue")
-      .update({ status: "cancelled", error_message: "Recall completed" })
-      .eq("type", "vaccine_reminder")
-      .eq("target_id", id)
-      .eq("status", "pending");
-  }
-  
-  // Reschedule reminders if due date changed
-  if (update.due_date && existing.due_date !== update.due_date) {
-    try {
-      const { data: clinic } = await supabase
-        .from("clinics")
-        .select("recall_reminders_enabled, recall_reminder_days_before")
-        .eq("id", recall.clinic_id)
-        .single();
-      
-      if (clinic?.recall_reminders_enabled) {
-        // Cancel old pending reminders
-        await supabase
-          .from("notification_queue")
-          .update({ status: "cancelled", error_message: "Recall rescheduled" })
-          .eq("type", "vaccine_reminder")
-          .eq("target_id", id)
-          .eq("status", "pending");
-        
-        // Create new reminders
-        const dueDate = new Date(recall.due_date);
-        const daysBefore = clinic.recall_reminder_days_before || 7;
-        
-        // Schedule reminder X days before due date
-        const reminderDateBefore = new Date(dueDate.getTime() - daysBefore * 24 * 60 * 60 * 1000);
-        if (reminderDateBefore > new Date()) {
-          await supabase.from("notification_queue").insert({
-            clinic_id: recall.clinic_id,
-            type: "vaccine_reminder",
-            target_id: recall.id,
-            scheduled_for: reminderDateBefore.toISOString(),
-            status: "pending"
-          });
-        }
-        
-        // Schedule reminder on due date
-        if (dueDate > new Date()) {
-          await supabase.from("notification_queue").insert({
-            clinic_id: recall.clinic_id,
-            type: "vaccine_reminder",
-            target_id: recall.id,
-            scheduled_for: dueDate.toISOString(),
-            status: "pending"
-          });
-        }
-        
-        // Schedule reminder 7 days after due date
-        const overdueDate = new Date(dueDate.getTime() + 7 * 24 * 60 * 60 * 1000);
-        if (overdueDate > new Date()) {
-          await supabase.from("notification_queue").insert({
-            clinic_id: recall.clinic_id,
-            type: "vaccine_reminder",
-            target_id: recall.id,
-            scheduled_for: overdueDate.toISOString(),
-            status: "pending"
-          });
-        }
-      }
-    } catch (err) {
-      console.error("Failed to reschedule vaccine reminders:", err);
-    }
-  }
-  
-  return recall;
+
+  return data as Recall;
 }
 
 export async function deleteRecall(id: number): Promise<void> {
@@ -608,7 +948,7 @@ export async function listAppointments(
   const { data, error } = await q;
   if (error) throw error;
 
-  return (data ?? []).map((row: any) => {
+  return ((data ?? []) as AppointmentJoinRow[]).map((row) => {
     const { pets, ...appt } = row;
     const { owners, ...pet } = pets;
     return { ...appt, pet, owner: owners } as AppointmentWithPet;
@@ -616,44 +956,17 @@ export async function listAppointments(
 }
 
 export async function createAppointment(
-  input: Omit<Appointment, "id" | "status" | "created_at">
+  input: Omit<Appointment, "id" | "clinic_id" | "status" | "created_at">
 ): Promise<Appointment> {
+  const clinicId = await requireCurrentClinicId();
   const { data, error } = await supabase
     .from("appointments")
-    .insert(input)
+    .insert({ ...input, clinic_id: clinicId, status: "scheduled" })
     .select()
     .single();
   if (error) throw error;
-  
-  const appointment = data as Appointment;
-  
-  // Schedule appointment reminder if enabled
-  try {
-    const { data: clinic } = await supabase
-      .from("clinics")
-      .select("appointment_reminders_enabled, appointment_reminder_hours_before")
-      .eq("id", appointment.clinic_id)
-      .single();
-    
-    if (clinic?.appointment_reminders_enabled && appointment.scheduled_at) {
-      const scheduledDate = new Date(appointment.scheduled_at);
-      const reminderDate = new Date(scheduledDate.getTime() - (clinic.appointment_reminder_hours_before || 24) * 60 * 60 * 1000);
-      
-      if (reminderDate > new Date()) {
-        await supabase.from("notification_queue").insert({
-          clinic_id: appointment.clinic_id,
-          type: "appointment_reminder",
-          target_id: appointment.id,
-          scheduled_for: reminderDate.toISOString(),
-          status: "pending"
-        });
-      }
-    }
-  } catch (err) {
-    console.error("Failed to schedule appointment reminder:", err);
-  }
-  
-  return appointment;
+
+  return data as Appointment;
 }
 
 export async function updateAppointment(
@@ -661,12 +974,13 @@ export async function updateAppointment(
   update: Partial<Omit<Appointment, "id" | "pet_id" | "created_at">>
 ): Promise<Appointment> {
   // Fetch existing appointment first
-  const { data: existing } = await supabase
+  const { data: existing, error: existingError } = await supabase
     .from("appointments")
     .select("*")
     .eq("id", id)
     .single();
   
+  if (existingError) throw existingError;
   if (!existing) throw new Error("Appointment not found");
   
   const { data, error } = await supabase
@@ -677,56 +991,8 @@ export async function updateAppointment(
     .single();
   if (error) throw error;
   
-  const appointment = data as Appointment;
-  
-  // Cancel existing pending reminders if appointment is cancelled or completed
-  if (update.status && (update.status === "cancelled" || update.status === "completed")) {
-    await supabase
-      .from("notification_queue")
-      .update({ status: "cancelled", error_message: "Appointment cancelled/completed" })
-      .eq("type", "appointment_reminder")
-      .eq("target_id", id)
-      .eq("status", "pending");
-  }
-  
-  // Reschedule reminder if date/time changed
-  if (update.scheduled_at && existing.scheduled_at !== update.scheduled_at) {
-    try {
-      const { data: clinic } = await supabase
-        .from("clinics")
-        .select("appointment_reminders_enabled, appointment_reminder_hours_before")
-        .eq("id", appointment.clinic_id)
-        .single();
-      
-      if (clinic?.appointment_reminders_enabled) {
-        // Cancel old pending reminders
-        await supabase
-          .from("notification_queue")
-          .update({ status: "cancelled", error_message: "Appointment rescheduled" })
-          .eq("type", "appointment_reminder")
-          .eq("target_id", id)
-          .eq("status", "pending");
-        
-        // Create new reminder
-        const scheduledDate = new Date(appointment.scheduled_at);
-        const reminderDate = new Date(scheduledDate.getTime() - (clinic.appointment_reminder_hours_before || 24) * 60 * 60 * 1000);
-        
-        if (reminderDate > new Date()) {
-          await supabase.from("notification_queue").insert({
-            clinic_id: appointment.clinic_id,
-            type: "appointment_reminder",
-            target_id: appointment.id,
-            scheduled_for: reminderDate.toISOString(),
-            status: "pending"
-          });
-        }
-      }
-    } catch (err) {
-      console.error("Failed to reschedule appointment reminder:", err);
-    }
-  }
-  
-  return appointment;
+
+  return data as Appointment;
 }
 
 export async function deleteAppointment(id: number): Promise<void> {
@@ -739,11 +1005,8 @@ export async function deleteAppointment(id: number): Promise<void> {
 export async function getDashboardSummary(): Promise<DashboardSummary> {
   await refreshRecallStatuses();
 
-  const now = new Date();
-  const startOfDay = new Date(now);
-  startOfDay.setUTCHours(0, 0, 0, 0);
-  const endOfDay = new Date(startOfDay);
-  endOfDay.setUTCDate(endOfDay.getUTCDate() + 1);
+  const startOfDay = startOfDayDateFns(new Date());
+  const endOfDay = addDaysDateFns(startOfDay, 1);
 
   const [apptRes, overdueRes, dueRes, upcomingRes, visitsRes, ownersCountRes, petsCountRes] =
     await Promise.all([
@@ -778,20 +1041,22 @@ export async function getDashboardSummary(): Promise<DashboardSummary> {
 
       supabase
         .from("owners")
-        .select("id", { count: "exact", head: true }),
+        .select("id", { count: "exact", head: true })
+        .is("deleted_at", null),
 
       supabase
         .from("pets")
-        .select("id", { count: "exact", head: true }),
+        .select("id", { count: "exact", head: true })
+        .is("deleted_at", null),
     ]);
 
-  const mapAppt = (row: any): AppointmentWithPet => {
+  const mapAppt = (row: AppointmentJoinRow): AppointmentWithPet => {
     const { pets, ...appt } = row;
     const { owners, ...pet } = pets;
     return { ...appt, pet, owner: owners };
   };
 
-  const mapRecall = (row: any): any => {
+  const mapRecall = (row: RecallJoinRow): RecallWithPet => {
     const { pets, ...recall } = row;
     const { owners, ...pet } = pets;
     return { ...recall, pet, owner: owners };
@@ -801,8 +1066,8 @@ export async function getDashboardSummary(): Promise<DashboardSummary> {
   const upcomingCount = (upcomingRes.data ?? []).length;
 
   return {
-    todayAppointments: (apptRes.data ?? []).map(mapAppt),
-    overdueRecalls: (overdueRes.data ?? []).map(mapRecall),
+    todayAppointments: ((apptRes.data ?? []) as AppointmentJoinRow[]).map(mapAppt),
+    overdueRecalls: ((overdueRes.data ?? []) as RecallJoinRow[]).map(mapRecall),
     upcomingRecallsCount: dueCount + upcomingCount,
     recentVisits: (visitsRes.data ?? []) as Visit[],
     totalOwners: ownersCountRes.count ?? 0,
@@ -895,41 +1160,42 @@ export async function getClinicExportData(clinicId: number) {
   const { data: owners, error: ownersError } = await supabase
     .from("owners")
     .select("*")
-    .eq("clinic_id", clinicId);
+    .eq("clinic_id", clinicId)
+    .is("deleted_at", null);
 
   if (ownersError) throw ownersError;
 
   // Fetch all pets for owners in this clinic
   const ownerIds = (owners || []).map(o => o.id);
-  const { data: pets, error: petsError } = await supabase
-    .from("pets")
-    .select("*")
-    .in("owner_id", ownerIds);
+  const petsResult = ownerIds.length
+    ? await supabase.from("pets").select("*").in("owner_id", ownerIds).is("deleted_at", null)
+    : { data: [] as Pet[], error: null };
+  const { data: pets, error: petsError } = petsResult;
 
   if (petsError) throw petsError;
 
   // Fetch all appointments for pets in this clinic
   const petIds = (pets || []).map(p => p.id);
-  const { data: appointments, error: appointmentsError } = await supabase
-    .from("appointments")
-    .select("*")
-    .in("pet_id", petIds);
+  const appointmentsResult = petIds.length
+    ? await supabase.from("appointments").select("*").in("pet_id", petIds)
+    : { data: [] as Appointment[], error: null };
+  const { data: appointments, error: appointmentsError } = appointmentsResult;
 
   if (appointmentsError) throw appointmentsError;
 
   // Fetch all visits for pets in this clinic
-  const { data: visits, error: visitsError } = await supabase
-    .from("visits")
-    .select("*")
-    .in("pet_id", petIds);
+  const visitsResult = petIds.length
+    ? await supabase.from("visits").select("*").in("pet_id", petIds)
+    : { data: [] as Visit[], error: null };
+  const { data: visits, error: visitsError } = visitsResult;
 
   if (visitsError) throw visitsError;
 
   // Fetch all recalls for pets in this clinic
-  const { data: recalls, error: recallsError } = await supabase
-    .from("recalls")
-    .select("*")
-    .in("pet_id", petIds);
+  const recallsResult = petIds.length
+    ? await supabase.from("recalls").select("*").in("pet_id", petIds)
+    : { data: [] as Recall[], error: null };
+  const { data: recalls, error: recallsError } = recallsResult;
 
   if (recallsError) throw recallsError;
 
@@ -948,7 +1214,7 @@ export async function getClinicExportData(clinicId: number) {
   // Enrich data with relationship names
   const enrichedPets = (pets || []).map(pet => ({
     ...pet,
-    owner_name: ownerMap.get(pet.owner_id)?.name 
+    owner_name: ownerMap.has(pet.owner_id)
       ? `${ownerMap.get(pet.owner_id)!.first_name} ${ownerMap.get(pet.owner_id)!.last_name}`
       : undefined,
   }));
@@ -1071,98 +1337,6 @@ export async function getEmailStatistics(clinicId: number): Promise<EmailStatist
   }
 }
 
-export async function createAppointmentReminder(
-  clinicId: number,
-  appointmentId: number,
-  scheduledFor: string
-): Promise<NotificationQueue> {
-  const { data, error } = await supabase
-    .from("notification_queue")
-    .insert({
-      clinic_id: clinicId,
-      type: "appointment_reminder",
-      target_id: appointmentId,
-      scheduled_for: scheduledFor,
-      status: "pending",
-    })
-    .select()
-    .single()
-
-  if (error) throw error
-
-  return data as NotificationQueue
-}
-
-export async function createVaccineReminder(
-  clinicId: number,
-  recallId: number,
-  scheduledFor: string
-): Promise<NotificationQueue> {
-  const { data, error } = await supabase
-    .from("notification_queue")
-    .insert({
-      clinic_id: clinicId,
-      type: "vaccine_reminder",
-      target_id: recallId,
-      scheduled_for: scheduledFor,
-      status: "pending",
-    })
-    .select()
-    .single()
-
-  if (error) throw error
-
-  return data as NotificationQueue
-}
-
-export async function recordSentEmail(
-  clinicId: number,
-  notificationQueueId: number | null,
-  recipientEmail: string,
-  subject: string,
-  body: string,
-  status: 'sent' | 'failed' | 'bounced' = 'sent',
-  errorMessage: string | null = null
-): Promise<SentEmail> {
-  const { data, error } = await supabase
-    .from("sent_emails")
-    .insert({
-      clinic_id: clinicId,
-      notification_queue_id: notificationQueueId,
-      recipient_email: recipientEmail,
-      subject,
-      body,
-      status,
-      error_message: errorMessage,
-    })
-    .select()
-    .single()
-
-  if (error) throw error
-
-  return data as SentEmail
-}
-
-export async function updateNotificationStatus(
-  queueId: number,
-  status: 'sent' | 'failed' | 'cancelled',
-  errorMessage: string | null = null
-): Promise<NotificationQueue> {
-  const { data, error } = await supabase
-    .from("notification_queue")
-    .update({
-      status,
-      error_message: errorMessage,
-    })
-    .eq("id", queueId)
-    .select()
-    .single()
-
-  if (error) throw error
-
-  return data as NotificationQueue
-}
-
 export async function sendTestEmail(clinicId: number, testEmail?: string): Promise<{ success: boolean; message: string }> {
   // Validate inputs
   if (!clinicId) {
@@ -1202,10 +1376,50 @@ export async function updateStaffMember(
   staffId: number,
   updates: {
     name?: string
-    role?: string
+    role?: StaffRole
     status?: "active" | "inactive"
   }
 ): Promise<Staff> {
+  const currentStaff = await requireCurrentStaff()
+  if (currentStaff.role !== "admin" || !currentStaff.clinic_id) {
+    throw new Error("Only clinic administrators can update staff members.")
+  }
+
+  const { data: target, error: targetError } = await supabase
+    .from("staff")
+    .select("id, clinic_id, role, status")
+    .eq("id", staffId)
+    .single()
+
+  if (targetError) throw targetError
+  if (target.clinic_id !== currentStaff.clinic_id) {
+    throw new Error("This staff member does not belong to your clinic.")
+  }
+  if (
+    target.id === currentStaff.id &&
+    (updates.role !== undefined || updates.status !== undefined)
+  ) {
+    throw new Error("You cannot change your own role or account status.")
+  }
+
+  if (
+    target.role === "admin" &&
+    (updates.role !== undefined && updates.role !== "admin" ||
+      updates.status === "inactive")
+  ) {
+    const { count, error: countError } = await supabase
+      .from("staff")
+      .select("id", { count: "exact", head: true })
+      .eq("clinic_id", currentStaff.clinic_id)
+      .eq("role", "admin")
+      .eq("status", "active")
+
+    if (countError) throw countError
+    if ((count ?? 0) <= 1) {
+      throw new Error("A clinic must keep at least one active administrator.")
+    }
+  }
+
   const { data, error } = await supabase
     .from("staff")
     .update(updates)
@@ -1221,50 +1435,26 @@ export async function addStaffMember(input: {
   clinic_id: number
   name: string
   email: string
-  role: string
+  role: StaffRole
 }): Promise<Staff> {
-  try {
-    console.log("Calling add_pending_staff:", input)
-
-    const response = await supabase.rpc("add_pending_staff", {
-      staff_name: input.name,
-      staff_email: input.email,
-      staff_role: input.role,
-    })
-
-    console.log("FULL RPC RESPONSE:", response)
-
-    const { data, error } = response
-
-    if (error) {
-      const detailedMessage = [
-        error.message,
-        error.details,
-        error.hint,
-        error.code,
-      ]
-        .filter(Boolean)
-        .join(" | ")
-
-      console.error("SUPABASE RPC ERROR:", error)
-
-      throw new Error(detailedMessage || JSON.stringify(error))
-    }
-
-    if (!data) {
-      throw new Error("Supabase returned no staff member data.")
-    }
-
-    return data as Staff
-  } catch (error) {
-    console.error("ADD STAFF FUNCTION ERROR:", error)
-
-    if (error instanceof Error) {
-      alert(`API error: ${error.message}`)
-      throw error
-    }
-
-    alert(`API error: ${JSON.stringify(error)}`)
-    throw new Error(JSON.stringify(error))
+  const currentStaff = await requireCurrentStaff()
+  if (currentStaff.role !== "admin" || currentStaff.clinic_id !== input.clinic_id) {
+    throw new Error("Only clinic administrators can add staff members.")
   }
+
+  const { data, error } = await supabase.rpc("admin_add_pending_staff", {
+    staff_name: input.name.trim(),
+    staff_email: input.email.trim().toLowerCase(),
+    staff_role: input.role,
+  }).single()
+
+  if (error) {
+    throw new Error(getErrorMessage(error, "Could not add the staff member."))
+  }
+
+  if (!data) {
+    throw new Error("Supabase returned no staff member data.")
+  }
+
+  return data as Staff
 }
